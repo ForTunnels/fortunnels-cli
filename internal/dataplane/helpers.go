@@ -15,7 +15,6 @@ import (
 
 const (
 	wsReadTimeout       = 2*config.MaxPingInterval + 15*time.Second
-	reconnectRetryDelay = 200 * time.Millisecond
 	udpMaxPacketSize    = 65535
 	udpDatagramMaxSize  = 65507
 	headerDataPlaneAuth = "X-Fortunnels-DP-Auth"

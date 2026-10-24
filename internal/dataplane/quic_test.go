@@ -54,7 +54,7 @@ func TestForwardUDPPacketsOverQUIC_DropsOversizedDatagramAndContinues(t *testing
 	conn := &oversizedDatagramConn{dropsRemaining: 100, accepted: make(chan []byte, 1)}
 	done := make(chan error, 1)
 	go func() {
-		done <- forwardUDPPacketsOverQUIC(ctx, cancel, conn, uc, "t1", "secret-auth", "127.0.0.1:53", newFlowRegistry())
+		done <- forwardUDPPacketsOverQUIC(ctx, cancel, conn, uc, "t1", "secret-auth", "127.0.0.1:53", newFlowRegistry(), nil)
 	}()
 	for i := 0; i < 100; i++ {
 		_, writeErr := peer.Write([]byte("oversized"))
@@ -137,7 +137,7 @@ func TestForwardUDPPacketsOverQUIC_RejectedSourcesDoNotAccumulate(t *testing.T) 
 	startQUICDatagramReceiver(ctx, cancel, conn, uc, flows)
 	done := make(chan error, 1)
 	go func() {
-		done <- forwardUDPPacketsOverQUIC(ctx, cancel, conn, uc, "t1", "auth", "127.0.0.1:53", flows)
+		done <- forwardUDPPacketsOverQUIC(ctx, cancel, conn, uc, "t1", "auth", "127.0.0.1:53", flows, nil)
 	}()
 	newPeer := func() *net.UDPConn {
 		peer, dialErr := net.DialUDP("udp", nil, uc.LocalAddr().(*net.UDPAddr))
@@ -225,7 +225,7 @@ func TestForwardUDPPacketsOverQUIC_FatalSendDiscardsNewSource(t *testing.T) {
 	flows := newFlowRegistry()
 	done := make(chan error, 1)
 	go func() {
-		done <- forwardUDPPacketsOverQUIC(ctx, cancel, conn, uc, "t1", "auth", "127.0.0.1:53", flows)
+		done <- forwardUDPPacketsOverQUIC(ctx, cancel, conn, uc, "t1", "auth", "127.0.0.1:53", flows, nil)
 	}()
 	_, err = peer.Write([]byte("first"))
 	require.NoError(t, err)
@@ -255,7 +255,7 @@ func TestForwardUDPPacketsOverQUIC_ContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- forwardUDPPacketsOverQUIC(ctx, cancel, nil, uc, "t1", "auth", "127.0.0.1:53", newFlowRegistry())
+		done <- forwardUDPPacketsOverQUIC(ctx, cancel, nil, uc, "t1", "auth", "127.0.0.1:53", newFlowRegistry(), nil)
 	}()
 
 	time.Sleep(20 * time.Millisecond)
@@ -283,6 +283,13 @@ func TestFlowRegistry_ConcurrentAccess(t *testing.T) {
 		}(i)
 	}
 	wg.Wait()
+}
+
+func TestNewQUICClientConfig_KeepsPathMTUDiscovery(t *testing.T) {
+	cfg := newQUICClientConfig(true)
+	require.True(t, cfg.EnableDatagrams)
+	require.False(t, cfg.DisablePathMTUDiscovery, "PMTUD raises the datagram size limit above the initial packet size")
+	require.Zero(t, cfg.InitialPacketSize, "an oversized initial packet can stall the handshake on small-MTU paths")
 }
 
 func listenTestUDP() (*net.UDPConn, error) {

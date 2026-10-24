@@ -20,7 +20,10 @@ import (
 
 var resolveDTLSServerAddr = net.ResolveUDPAddr
 
-const maxDTLSRecordPayload = 8137
+const (
+	maxDTLSRecordPayload = 8137
+	dtlsFramingRecord    = "record"
+)
 
 var (
 	errDTLSRecordPayloadTooLarge = errors.New("DTLS record payload too large")
@@ -93,7 +96,7 @@ func startDTLSDataPlaneUDPContext(
 	}()
 	defer close(stopCloser)
 	// bootstrap with destination
-	b, err := encodePreface(map[string]string{"auth": authToken, "tunnel_id": tunnelID, "dst": udpDst, "framing": "record"})
+	b, err := dtlsBootstrapRecord(authToken, tunnelID, udpDst)
 	if err != nil {
 		return err
 	}
@@ -102,20 +105,7 @@ func startDTLSDataPlaneUDPContext(
 	if _, err := conn.Write(b); err != nil {
 		return classifyTransportDialError(err)
 	}
-	var lastSrcMu sync.RWMutex
-	var lastSrc *net.UDPAddr
-	errCh := make(chan error, 2)
-	startUDPLocalToPackets(func(payload []byte) error { return writeUDPDatagramRecord(conn, payload) },
-		maxDTLSRecordPayload, uc, errCh, &lastSrcMu, &lastSrc)
-	recordBuf := make([]byte, udpMaxPacketSize)
-	startPacketsToUDPLocal(func() ([]byte, error) { return readUDPDatagramRecord(conn, recordBuf) },
-		uc, errCh, &lastSrcMu, &lastSrc)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case err := <-errCh:
-		return err
-	}
+	return runDTLSUDPSession(ctx, conn, uc, defaultDTLSUDPSessionOptions())
 }
 
 func writeUDPDatagramRecord(w io.Writer, payload []byte) error {
@@ -141,10 +131,17 @@ func readUDPDatagramRecord(r io.Reader, buf []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if n < 2 || int(binary.BigEndian.Uint16(buf[:2])) != n-2 {
-		return buf[:n], fmt.Errorf("%w: size %d", errInvalidDTLSRecord, n)
+	return parseUDPDatagramRecord(buf[:n])
+}
+
+// parseUDPDatagramRecord decodes one legacy record [u16 len][payload]. On error
+// it returns the bytes it rejected, for drop logging.
+func parseUDPDatagramRecord(record []byte) ([]byte, error) {
+	n := len(record)
+	if n < 2 || int(binary.BigEndian.Uint16(record[:2])) != n-2 {
+		return record, fmt.Errorf("%w: size %d", errInvalidDTLSRecord, n)
 	}
-	payload := buf[2:n]
+	payload := record[2:n]
 	if len(payload) > maxDTLSRecordPayload {
 		return payload, fmt.Errorf("%w: %d > %d", errDTLSRecordPayloadTooLarge, len(payload), maxDTLSRecordPayload)
 	}
@@ -152,8 +149,12 @@ func readUDPDatagramRecord(r io.Reader, buf []byte) ([]byte, error) {
 }
 
 func logDTLSRecordDrop(drops *uint64, size int) {
+	logDTLSPayloadDrop(drops, size, maxDTLSRecordPayload)
+}
+
+func logDTLSPayloadDrop(drops *uint64, size, limit int) {
 	*drops++
 	if *drops == 1 || *drops%100 == 0 {
-		log.Printf("dtls: dropped record payload (size=%d limit=%d drops=%d)", size, maxDTLSRecordPayload, *drops)
+		log.Printf("dtls: dropped record payload (size=%d limit=%d drops=%d)", size, limit, *drops)
 	}
 }

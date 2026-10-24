@@ -7,6 +7,7 @@ import (
 	"flag"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -269,6 +270,12 @@ func TestParse_BooleanFlagDoesNotConsumePositional(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, cfg.Encrypt)
 	assert.Equal(t, "127.0.0.1:9000", cfg.TargetAddr)
+}
+
+func TestParse_BackoffFlagsReachReconnectBackoff(t *testing.T) {
+	cfg, err := testParseWithArgs(t, []string{"client", "--backoff-initial", "3", "--backoff-max", "45", "tcp", "5433"})
+	require.NoError(t, err)
+	assert.Equal(t, ReconnectBackoff{Initial: 3 * time.Second, Max: 45 * time.Second}, cfg.ReconnectBackoff())
 }
 
 func TestApplySecretSourcesFromEnv(t *testing.T) {

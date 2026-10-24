@@ -26,7 +26,9 @@ type quicDatagramConn interface {
 	ReceiveDatagram(context.Context) ([]byte, error)
 }
 
-// startQUICDataPlaneUDP listens on udpListen and forwards via QUIC datagrams, receiving replies
+// startQUICDataPlaneUDP listens on udpListen and forwards via QUIC datagrams,
+// receiving replies. Datagrams too large for one DATAGRAM frame use the
+// connection's udp stream when the server acks it (quic_udp_stream.go).
 func startQUICDataPlaneUDPContext(
 	ctx context.Context,
 	serverURL, quicPort, tunnelID, authToken, udpDst, udpListen, transportCAPath string,
@@ -69,8 +71,10 @@ func startQUICDataPlaneUDPContext(
 	defer close(stopCloser)
 
 	flows := newFlowRegistry()
+	oversize := newQUICUDPStreamFallback(ctx, quicConnStreamOpener(qc), uc, flows, tunnelID, authToken, udpDst)
+	defer oversize.close()
 	startQUICDatagramReceiver(ctx, cancel, qc, uc, flows)
-	err = forwardUDPPacketsOverQUIC(ctx, cancel, qc, uc, tunnelID, authToken, udpDst, flows)
+	err = forwardUDPPacketsOverQUIC(ctx, cancel, qc, uc, tunnelID, authToken, udpDst, flows, oversize)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -101,13 +105,21 @@ func startQUICDatagramReceiver(
 				Data     []byte `json:"data"`
 			}
 			if json.Unmarshal(b, &fr) == nil && fr.Protocol == udpTransport && len(fr.Data) > 0 {
-				if ra, ok := flows.get(fr.FlowID); ok {
-					//nolint:errcheck // best-effort UDP forward
-					_, _ = uc.WriteToUDP(fr.Data, ra)
-				}
+				deliverQUICReply(flows, uc, fr.FlowID, fr.Data)
 			}
 		}
 	}()
+}
+
+// deliverQUICReply writes a server reply to the local source of a live flow,
+// whichever QUIC path (DATAGRAM frame or udp stream) carried it.
+func deliverQUICReply(flows *flowRegistry, replies udpReplyWriter, flowID string, payload []byte) {
+	ra, ok := flows.get(flowID)
+	if !ok {
+		return
+	}
+	//nolint:errcheck // best-effort UDP forward
+	_, _ = replies.WriteToUDP(payload, ra)
 }
 
 func forwardUDPPacketsOverQUIC(
@@ -117,6 +129,7 @@ func forwardUDPPacketsOverQUIC(
 	uc *net.UDPConn,
 	tunnelID, authToken, udpDst string,
 	flows *flowRegistry,
+	oversize quicOversizeSender,
 ) error {
 	buf := make([]byte, udpDatagramMaxSize)
 	var dropped uint64
@@ -156,39 +169,28 @@ func forwardUDPPacketsOverQUIC(
 		// Register before sending so a prompt reply can find the source. A rejected
 		// first packet must not leave state behind for the lifetime of the session.
 		newFlow := flows.registerQUICFlow(flowID, raddr)
-		if err := qc.SendDatagram(b); err != nil {
-			if newFlow {
-				flows.discardQUICFlow(flowID, raddr)
-			}
-			var tooLarge *quic.DatagramTooLargeError
-			if errors.As(err, &tooLarge) {
-				dropped++
-				if dropped == 1 || dropped%100 == 0 {
-					log.Printf("QUIC datagram dropped: payload size=%d max=%d dropped=%d", len(b), tooLarge.MaxDatagramPayloadSize, dropped)
-				}
-				continue
-			}
-			cancel()
-			return err
+		sendErr := qc.SendDatagram(b)
+		if sendErr == nil {
+			continue
 		}
-	}
-}
-
-func (r *flowRegistry) registerQUICFlow(flowID string, addr *net.UDPAddr) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if _, exists := r.flows[flowID]; exists {
-		return false
-	}
-	r.flows[flowID] = addr
-	return true
-}
-
-func (r *flowRegistry) discardQUICFlow(flowID string, addr *net.UDPAddr) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.flows[flowID] == addr {
-		delete(r.flows, flowID)
+		var tooLarge *quic.DatagramTooLargeError
+		isTooLarge := errors.As(sendErr, &tooLarge)
+		// A datagram too large for one DATAGRAM frame goes over the udp stream
+		// when the server supports it; otherwise it is dropped.
+		if isTooLarge && oversize != nil && oversize.sendOversize(flowID, buf[:n]) {
+			continue
+		}
+		if newFlow {
+			flows.discardQUICFlow(flowID, raddr)
+		}
+		if !isTooLarge {
+			cancel()
+			return sendErr
+		}
+		dropped++
+		if dropped == 1 || dropped%100 == 0 {
+			log.Printf("QUIC datagram dropped: payload size=%d max=%d dropped=%d", len(b), tooLarge.MaxDatagramPayloadSize, dropped)
+		}
 	}
 }
 
@@ -209,13 +211,16 @@ func dialQUICConnectionWithCA(ctx context.Context, serverURL, port string, enabl
 	if err != nil {
 		return nil, permanentError{err}
 	}
-	quicCfg := &quic.Config{}
-	if enableDatagrams {
-		quicCfg.EnableDatagrams = true
-	}
-	conn, err := quic.DialAddr(ctx, host, tlsConf, quicCfg)
+	conn, err := quic.DialAddr(ctx, host, tlsConf, newQUICClientConfig(enableDatagrams))
 	if err != nil {
 		return nil, classifyTransportDialError(err)
 	}
 	return conn, nil
+}
+
+// newQUICClientConfig keeps path MTU discovery on: a DATAGRAM frame must fit in
+// one QUIC packet, so discovery is what lets larger UDP payloads through after
+// the 1280-byte initial packet size.
+func newQUICClientConfig(enableDatagrams bool) *quic.Config {
+	return &quic.Config{EnableDatagrams: enableDatagrams}
 }

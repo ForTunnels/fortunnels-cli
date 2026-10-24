@@ -156,6 +156,34 @@ func TestRunReconnecting_RetriesTransientAndStopsOnPermanent(t *testing.T) {
 	})
 }
 
+func TestReconnectRunner_HealthySessionResetsBackoff(t *testing.T) {
+	clock := time.Unix(0, 0)
+	var waits []time.Duration
+	runner := newReconnectRunner(10*time.Millisecond, 80*time.Millisecond)
+	runner.now = func() time.Time { return clock }
+	runner.wait = func(_ context.Context, d time.Duration) error {
+		waits = append(waits, d)
+		if len(waits) == 5 {
+			return context.Canceled
+		}
+		return nil
+	}
+	attempts := 0
+	err := runner.run(context.Background(), func(context.Context) error {
+		attempts++
+		if attempts == 4 {
+			// A session that stays up far longer than the maximum backoff, then drops.
+			clock = clock.Add(time.Hour)
+		}
+		return errors.New("transport failed")
+	})
+
+	require.ErrorIs(t, err, context.Canceled)
+	ms := time.Millisecond
+	require.Equal(t, []time.Duration{10 * ms, 20 * ms, 40 * ms, 10 * ms, 20 * ms}, waits,
+		"fast failures grow the delay; the drop of a long-lived session retries after the initial delay")
+}
+
 func TestRunReconnecting_DTLSRemoteDNSFailuresRetry(t *testing.T) {
 	previous := resolveDTLSServerAddr
 	t.Cleanup(func() { resolveDTLSServerAddr = previous })

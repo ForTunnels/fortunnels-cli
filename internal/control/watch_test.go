@@ -1,5 +1,3 @@
-//go:build integration
-
 // SPDX-License-Identifier: PROPRIETARY
 // Copyright (c) 2026 ForTunnels
 
@@ -320,7 +318,7 @@ func TestHandleControlMessage(t *testing.T) {
 			lastStatus := ""
 			var doneOnce sync.Once
 
-			result := handleControlMessage(tt.msg, ackCh, intervalCh, done, &doneOnce, 10*time.Second, &lastStatus)
+			result := handleControlMessage(tt.msg, ackCh, intervalCh, done, &doneOnce, &lastStatus)
 			assert.Equal(t, tt.shouldReturn, result, "handleControlMessage() = %v, want %v")
 		})
 	}
@@ -335,9 +333,9 @@ func TestHandleControlMessageRepeatedTunnelUpdatedStatus(t *testing.T) {
 	lastStatus := ""
 
 	output := captureStdout(t, func() {
-		result := handleControlMessage(msg, ackCh, intervalCh, done, &doneOnce, 10*time.Second, &lastStatus)
+		result := handleControlMessage(msg, ackCh, intervalCh, done, &doneOnce, &lastStatus)
 		assert.False(t, result)
-		result = handleControlMessage(msg, ackCh, intervalCh, done, &doneOnce, 10*time.Second, &lastStatus)
+		result = handleControlMessage(msg, ackCh, intervalCh, done, &doneOnce, &lastStatus)
 		assert.False(t, result)
 	})
 
@@ -358,7 +356,7 @@ func TestHandleControlMessageSuppressesInitialActive(t *testing.T) {
 	lastStatus := statusActive
 
 	output := captureStdout(t, func() {
-		result := handleControlMessage(msg, ackCh, intervalCh, done, &doneOnce, 10*time.Second, &lastStatus)
+		result := handleControlMessage(msg, ackCh, intervalCh, done, &doneOnce, &lastStatus)
 		assert.False(t, result)
 	})
 
@@ -439,6 +437,7 @@ func TestNotifyAckReceived_FullChannel(t *testing.T) {
 	ackCh <- struct{}{} // Fill channel
 	// Should not block
 	notifyAckReceived(ackCh)
+	assert.Len(t, ackCh, 1, "a full channel keeps its single pending ack")
 }
 
 func TestUpdateFallbackInterval(t *testing.T) {

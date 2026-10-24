@@ -77,17 +77,29 @@ func (e permanentError) Error() string { return e.err.Error() }
 func (e permanentError) Unwrap() error { return e.err }
 
 func runReconnecting(ctx context.Context, boInit, boMax time.Duration, attempt func(context.Context) error) error {
-	if boInit <= 0 {
-		boInit = time.Second
-	}
-	if boMax < boInit {
-		boMax = boInit
-	}
-	backoff := boInit
+	return newReconnectRunner(boInit, boMax).run(ctx, attempt)
+}
+
+// reconnectRunner reruns a long-lived transport attempt with exponential
+// backoff between failures. An attempt that stayed up for at least the maximum
+// backoff was a working session, not part of a fast failure loop, so the retry
+// after it starts again from the initial delay.
+type reconnectRunner struct {
+	retry *reconnectBackoff
+	now   func() time.Time
+	wait  retryWaiter
+}
+
+func newReconnectRunner(boInit, boMax time.Duration) reconnectRunner {
+	return reconnectRunner{retry: newReconnectBackoff(boInit, boMax), now: time.Now, wait: waitRetryDelay}
+}
+
+func (r reconnectRunner) run(ctx context.Context, attempt func(context.Context) error) error {
 	for attempts := 1; ; attempts++ {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		started := r.now()
 		err := attempt(ctx)
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -99,17 +111,16 @@ func runReconnecting(ctx context.Context, boInit, boMax time.Duration, attempt f
 		if errors.As(err, &permanent) {
 			return err
 		}
+		if r.now().Sub(started) >= r.retry.maximum {
+			r.retry.Reset()
+		}
+		delay := r.retry.Next()
 		// Raw transport errors can include an authenticated URL. Keep this
 		// retry notice limited to attempt metadata.
-		log.Printf("data-plane attempt %d failed; next retry in %s", attempts, backoff)
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
+		log.Printf("data-plane attempt %d failed; next retry in %s", attempts, delay)
+		if waitErr := r.wait(ctx, delay); waitErr != nil {
+			return waitErr
 		}
-		backoff = nextBackoff(backoff, boMax)
 	}
 }
 

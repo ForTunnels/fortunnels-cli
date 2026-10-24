@@ -30,9 +30,18 @@ type stoppableTicker interface {
 // createDataPlaneSession creates a WebSocket connection and smux session for data plane operations.
 // Returns the session and a cleanup function that should be called when done.
 func CreateDataPlaneSession(serverURL, tunnelID string, settings config.RuntimeSettings, dpAuthToken string) (*smux.Session, func(), error) {
+	sess, _, cleanup, err := createDataPlaneSessionWithFeatures(serverURL, tunnelID, settings, dpAuthToken)
+	return sess, cleanup, err
+}
+
+// createDataPlaneSessionWithFeatures is CreateDataPlaneSession that also
+// returns the optional features the server advertised on the upgrade response.
+func createDataPlaneSessionWithFeatures(
+	serverURL, tunnelID string, settings config.RuntimeSettings, dpAuthToken string,
+) (*smux.Session, dataPlaneFeatures, func(), error) {
 	wsURL, origin, authToken, err := buildWebSocketURL(serverURL, tunnelID, dpAuthToken)
 	if err != nil {
-		return nil, nil, err
+		return nil, dataPlaneFeatures{}, nil, err
 	}
 	h := http.Header{}
 	h.Set("Origin", origin)
@@ -42,8 +51,9 @@ func CreateDataPlaneSession(serverURL, tunnelID string, settings config.RuntimeS
 		defer resp.Body.Close()
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("ws dial: %w", err)
+		return nil, dataPlaneFeatures{}, nil, fmt.Errorf("ws dial: %w", err)
 	}
+	features := dataPlaneFeaturesFromResponse(resp)
 
 	pingDone := make(chan struct{})
 	pingTicker := time.NewTicker(settings.PingInterval)
@@ -54,7 +64,7 @@ func CreateDataPlaneSession(serverURL, tunnelID string, settings config.RuntimeS
 		pingTicker.Stop()
 		close(pingDone)
 		conn.Close()
-		return nil, nil, fmt.Errorf("smux client: %w", err)
+		return nil, dataPlaneFeatures{}, nil, fmt.Errorf("smux client: %w", err)
 	}
 
 	var cleanupOnce sync.Once
@@ -67,7 +77,7 @@ func CreateDataPlaneSession(serverURL, tunnelID string, settings config.RuntimeS
 		})
 	}
 
-	return sess, cleanup, nil
+	return sess, features, cleanup, nil
 }
 
 // Reconnectable session manager ensures there is a live smux session and
@@ -97,7 +107,10 @@ func (m *Manager) SetLifecycleHandler(handler LifecycleHandler) {
 	m.lifecycleHandler = handler
 }
 
+// NewManager builds a reconnecting session manager. Unset backoff bounds fall
+// back to the CLI defaults so a zero value never produces a tight redial loop.
 func NewManager(serverURL, tunnelID, dpAuthToken string, boInit, boMax time.Duration, settings config.RuntimeSettings) *Manager {
+	boInit, boMax = normalizeReconnectBackoff(boInit, boMax)
 	return &Manager{
 		serverURL:   serverURL,
 		tunnelID:    tunnelID,

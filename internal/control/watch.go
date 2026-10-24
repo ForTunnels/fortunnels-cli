@@ -85,24 +85,9 @@ func RunLifecycleWatch(
 	onTerminal func(error),
 ) {
 	w := NewLifecycleWatcher(nil, onTerminal)
-	backoff := lifecycleBackoffInitial
-	for ctx.Err() == nil {
-		terminal, watchErr := w.lifecycleWatchAttempt(ctx, httpClient, serverURL, tunnelID, bearer, runtime)
-		if terminal || ctx.Err() != nil {
-			return
-		}
-		if watchErr != nil {
-			logDebug("lifecycle WebSocket unavailable; next retry in %s", backoff)
-		}
-		timer := time.NewTimer(backoff)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		backoff = min(backoff*2, lifecycleBackoffMax)
-	}
+	runLifecycleRetries(ctx, func(ctx context.Context) lifecycleAttemptResult {
+		return w.lifecycleWatchAttempt(ctx, httpClient, serverURL, tunnelID, bearer, runtime)
+	}, waitLifecycleRetry)
 }
 
 const (
@@ -111,7 +96,66 @@ const (
 	lifecycleReadTimeout    = 90 * time.Second
 )
 
-func (w *Watcher) lifecycleWatchAttempt(ctx context.Context, httpClient *http.Client, serverURL, tunnelID, bearer string, runtime config.RuntimeSettings) (bool, error) {
+// lifecycleAttemptResult summarizes one lifecycle WebSocket connection.
+type lifecycleAttemptResult struct {
+	terminal   bool  // a terminal event ended the watch
+	subscribed bool  // the server confirmed the subscription before the connection ended
+	err        error // why a non-terminal connection ended
+}
+
+// runLifecycleRetries reconnects the lifecycle watch with exponential backoff
+// until a terminal event arrives or ctx ends.
+func runLifecycleRetries(
+	ctx context.Context,
+	attempt func(context.Context) lifecycleAttemptResult,
+	wait func(context.Context, time.Duration) bool,
+) {
+	backoff := lifecycleBackoffInitial
+	for ctx.Err() == nil {
+		result := attempt(ctx)
+		if result.terminal || ctx.Err() != nil {
+			return
+		}
+		if result.subscribed {
+			// The server accepted this watch, so its drop starts a new failure sequence.
+			backoff = lifecycleBackoffInitial
+		}
+		if result.err != nil {
+			logDebug("lifecycle WebSocket unavailable; next retry in %s", backoff)
+		}
+		if !wait(ctx, backoff) {
+			return
+		}
+		backoff = min(backoff*2, lifecycleBackoffMax)
+	}
+}
+
+// waitLifecycleRetry sleeps for d and reports false when ctx ended first.
+func waitLifecycleRetry(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (w *Watcher) lifecycleWatchAttempt(ctx context.Context, httpClient *http.Client, serverURL, tunnelID, bearer string, runtime config.RuntimeSettings) lifecycleAttemptResult {
+	// handleControlMessage signals the server's "subscribed" acknowledgement here.
+	ackCh := make(chan struct{}, 1)
+	terminal, err := w.watchLifecycleConnection(ctx, httpClient, serverURL, tunnelID, bearer, runtime, ackCh)
+	return lifecycleAttemptResult{terminal: terminal, subscribed: len(ackCh) > 0, err: err}
+}
+
+func (w *Watcher) watchLifecycleConnection(
+	ctx context.Context,
+	httpClient *http.Client,
+	serverURL, tunnelID, bearer string,
+	runtime config.RuntimeSettings,
+	ackCh chan<- struct{},
+) (bool, error) {
 	wsURL, err := buildControlWebSocketURL(serverURL, tunnelID)
 	if err != nil {
 		return false, err
@@ -143,7 +187,6 @@ func (w *Watcher) lifecycleWatchAttempt(ctx context.Context, httpClient *http.Cl
 		return false, deadlineErr
 	}
 	conn.SetPongHandler(func(string) error { return conn.SetReadDeadline(time.Now().Add(lifecycleReadTimeout)) })
-	ackCh := make(chan struct{}, 1)
 	intervalCh := make(chan time.Duration, 1)
 	done := make(chan struct{})
 	var doneOnce sync.Once

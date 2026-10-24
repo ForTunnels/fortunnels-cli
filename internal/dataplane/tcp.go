@@ -93,36 +93,42 @@ func backendRetryGuidance(protocol string) string {
 	}
 }
 
+// IncomingTunnel identifies the tunnel an expose-local mode serves and how its
+// data-plane session reconnects.
+type IncomingTunnel struct {
+	ServerURL string
+	TunnelID  string
+	AuthToken string // data-plane auth token
+	Backoff   config.ReconnectBackoff
+}
+
 func StartDataPlaneServeIncoming(serverURL, tunnelID string, runtime config.RuntimeSettings, reporter BackendStateReporter, dpAuthToken string) error {
-	return StartDataPlaneServeIncomingContext(context.Background(), serverURL, tunnelID, runtime, reporter, dpAuthToken, nil)
+	tunnel := IncomingTunnel{ServerURL: serverURL, TunnelID: tunnelID, AuthToken: dpAuthToken}
+	return StartDataPlaneServeIncomingContext(context.Background(), tunnel, runtime, reporter, nil)
 }
 
 func StartDataPlaneServeIncomingContext(
 	ctx context.Context,
-	serverURL, tunnelID string,
+	tunnel IncomingTunnel,
 	runtime config.RuntimeSettings,
 	reporter BackendStateReporter,
-	dpAuthToken string,
 	onLifecycle func(protocolv1.LifecycleEventPayload),
 ) error {
-	return startIncomingDataPlaneContext(
-		ctx, serverURL, tunnelID, runtime, reporter, dpAuthToken, onLifecycle, serveIncomingStream, "incoming stream error",
-	)
+	return startIncomingDataPlaneContext(ctx, tunnel, runtime, reporter, onLifecycle, serveIncomingStream, "incoming stream error")
 }
 
 type incomingStreamHandler func(io.ReadWriteCloser, BackendStateReporter) error
 
 func startIncomingDataPlaneContext(
 	ctx context.Context,
-	serverURL, tunnelID string,
+	tunnel IncomingTunnel,
 	runtime config.RuntimeSettings,
 	reporter BackendStateReporter,
-	dpAuthToken string,
 	onLifecycle func(protocolv1.LifecycleEventPayload),
 	handleStream incomingStreamHandler,
 	errorLabel string,
 ) error {
-	mgr := NewManager(serverURL, tunnelID, dpAuthToken, time.Second, 30*time.Second, runtime)
+	mgr := newIncomingDataPlaneManager(tunnel, runtime)
 	mgr.SetLifecycleHandler(onLifecycle)
 	defer mgr.Close()
 	stopCloser := make(chan struct{})
@@ -134,11 +140,44 @@ func startIncomingDataPlaneContext(
 		}
 	}()
 	defer close(stopCloser)
+	loop := incomingStreamLoop{
+		sessions: mgr,
+		retry:    newReconnectBackoff(mgr.boInit, mgr.boMax),
+		wait:     waitRetryDelay,
+		dispatch: func(s io.ReadWriteCloser) {
+			go func() {
+				if err := handleStream(s, reporter); err != nil && !support.IsBenignCopyError(err) {
+					log.Printf("%s: %v", errorLabel, err)
+				}
+			}()
+		},
+	}
+	return loop.run(ctx)
+}
+
+// incomingSessionSource supplies live data-plane sessions to the incoming-stream loop.
+type incomingSessionSource interface {
+	EnsureSessionContext(ctx context.Context) (dataPlaneSession, error)
+	resetSession()
+}
+
+// incomingStreamLoop accepts server-opened streams on the current session and
+// re-establishes the session when accepting fails. A server can accept the
+// WebSocket and then reject the session, so the redial delay keeps growing
+// across sessions until one of them accepts a stream.
+type incomingStreamLoop struct {
+	sessions incomingSessionSource
+	retry    *reconnectBackoff
+	wait     retryWaiter
+	dispatch func(io.ReadWriteCloser)
+}
+
+func (l incomingStreamLoop) run(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		sess, err := mgr.EnsureSessionContext(ctx)
+		sess, err := l.sessions.EnsureSessionContext(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -150,20 +189,21 @@ func startIncomingDataPlaneContext(
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			mgr.resetSession()
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(reconnectRetryDelay):
+			l.sessions.resetSession()
+			if waitErr := l.wait(ctx, l.retry.Next()); waitErr != nil {
+				return waitErr
 			}
 			continue
 		}
-		go func(s io.ReadWriteCloser) {
-			if err := handleStream(s, reporter); err != nil && !support.IsBenignCopyError(err) {
-				log.Printf("%s: %v", errorLabel, err)
-			}
-		}(st)
+		l.retry.Reset()
+		l.dispatch(st)
 	}
+}
+
+// newIncomingDataPlaneManager builds the session manager for the expose-local
+// HTTP, TCP and UDP modes from the configured --backoff-initial/--backoff-max.
+func newIncomingDataPlaneManager(tunnel IncomingTunnel, runtime config.RuntimeSettings) *Manager {
+	return NewManager(tunnel.ServerURL, tunnel.TunnelID, tunnel.AuthToken, tunnel.Backoff.Initial, tunnel.Backoff.Max, runtime)
 }
 
 // setupAck and setupError are JSON lines sent to the server for proxy error classification.

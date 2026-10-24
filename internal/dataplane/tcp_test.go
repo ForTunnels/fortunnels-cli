@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: PROPRIETARY
 // Copyright (c) 2026 ForTunnels
 
-//go:build integration
-
 package dataplane
 
 import (
@@ -233,33 +231,6 @@ func createTestTCPServer(t *testing.T, handler func(net.Conn)) (addr string, cle
 	}()
 
 	return addr, func() { ln.Close() }
-}
-
-func TestServeIncomingStream_ValidConnection(t *testing.T) {
-	// Create a test TCP server that echoes data
-	serverAddr, cleanup := createTestTCPServer(t, func(conn net.Conn) {
-		defer conn.Close()
-		// Echo data
-		_, _ = io.Copy(conn, conn)
-	})
-	defer cleanup()
-
-	preface := `{"dst": "` + serverAddr + `", "proto": "tcp"}` + "\n"
-	testData := []byte("test data\n")
-
-	// Create a stream with preface and data
-	streamData := append([]byte(preface), testData...)
-	stream := &mockTCPReadWriteCloser{
-		readData: streamData,
-	}
-
-	// This will try to dial the server and copy data
-	// Since we're using mocks, we can't fully test the bidirectional copy
-	// But we can verify the function handles valid input
-	// In a real scenario, this would require integration tests
-	_ = serveIncomingStream(stream, nil)
-	// Function may return error due to mock limitations; we only check stream was used.
-	_ = stream.closed
 }
 
 func TestReadStreamDestination_WithWhitespace(t *testing.T) {

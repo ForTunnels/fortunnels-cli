@@ -25,15 +25,12 @@ var errInvalidUDPFrame = errors.New("invalid UDP frame")
 // StartDataPlaneServeIncomingUDP accepts smux streams opened by server UDP ingress and bridges to a local UDP backend.
 func StartDataPlaneServeIncomingUDPContext(
 	ctx context.Context,
-	serverURL, tunnelID string,
+	tunnel IncomingTunnel,
 	runtime config.RuntimeSettings,
 	reporter BackendStateReporter,
-	dpAuthToken string,
 	onLifecycle func(protocolv1.LifecycleEventPayload),
 ) error {
-	return startIncomingDataPlaneContext(
-		ctx, serverURL, tunnelID, runtime, reporter, dpAuthToken, onLifecycle, serveIncomingUDPStream, "incoming udp stream error",
-	)
+	return startIncomingDataPlaneContext(ctx, tunnel, runtime, reporter, onLifecycle, serveIncomingUDPStream, "incoming udp stream error")
 }
 
 func serveIncomingUDPStream(stream io.ReadWriteCloser, reporter BackendStateReporter) error {
@@ -132,7 +129,7 @@ func StartDataPlaneUDPContext(ctx context.Context, serverURL, tunnelID, dst, lis
 		return permanentError{fmt.Errorf("listen udp: %w", err)}
 	}
 	defer uc.Close()
-	sess, cleanup, err := CreateDataPlaneSession(serverURL, tunnelID, runtime, dpAuthToken)
+	sess, features, cleanup, err := createDataPlaneSessionWithFeatures(serverURL, tunnelID, runtime, dpAuthToken)
 	if err != nil {
 		return err
 	}
@@ -142,7 +139,10 @@ func StartDataPlaneUDPContext(ctx context.Context, serverURL, tunnelID, dst, lis
 		return fmt.Errorf("open stream: %w", err)
 	}
 	defer stream.Close()
-	if prefaceErr := sendUDPPreface(stream, dst, tunnelID); prefaceErr != nil {
+	// Flow framing is requested only from a server that advertised it on this
+	// dial; any other server gets today's preface and framing.
+	flowFraming := features.udpFlowV1
+	if prefaceErr := sendUDPStreamPreface(stream, dst, tunnelID, flowFraming); prefaceErr != nil {
 		return prefaceErr
 	}
 	wrapped, err := wrapClientStream(stream, tunnelID, enc)
@@ -162,10 +162,14 @@ func StartDataPlaneUDPContext(ctx context.Context, serverURL, tunnelID, dst, lis
 
 	// stop serving if tunnel was deleted on server (future enhancement via watchTunnelDeleted)
 	errCh := make(chan error, 2)
-	var lastSrcMu sync.RWMutex
-	var lastSrc *net.UDPAddr
-	startUDPLocalToStream(wrapped, uc, errCh, &lastSrcMu, &lastSrc)
-	startStreamToUDPLocal(wrapped, uc, errCh, &lastSrcMu, &lastSrc)
+	if flowFraming {
+		startUDPFlowStreamRelays(wrapped, uc, errCh, newUDPFlowRegistry())
+	} else {
+		var lastSrcMu sync.RWMutex
+		var lastSrc *net.UDPAddr
+		startUDPLocalToStream(wrapped, uc, errCh, &lastSrcMu, &lastSrc)
+		startStreamToUDPLocal(wrapped, uc, errCh, &lastSrcMu, &lastSrc)
+	}
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

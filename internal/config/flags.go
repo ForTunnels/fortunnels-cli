@@ -114,6 +114,18 @@ type EncryptionSettings struct {
 	PSK     string
 }
 
+// ReconnectBackoff bounds the delay between data-plane reconnect attempts
+// (--backoff-initial, --backoff-max). Zero fields select the transport defaults.
+type ReconnectBackoff struct {
+	Initial time.Duration
+	Max     time.Duration
+}
+
+// ReconnectBackoff extracts the configured reconnect backoff.
+func (c *Config) ReconnectBackoff() ReconnectBackoff {
+	return ReconnectBackoff{Initial: c.BackoffInitial, Max: c.BackoffMax}
+}
+
 // RuntimeSettings extracts timing configuration.
 func (c *Config) RuntimeSettings() RuntimeSettings {
 	return RuntimeSettings{

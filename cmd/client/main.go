@@ -176,6 +176,12 @@ func runClientWorkflow(cfg *config.Config) error {
 	return nil
 }
 
+// incomingTunnel describes the created tunnel for the expose-local serve loops,
+// including the configured --backoff-initial/--backoff-max.
+func incomingTunnel(cfg *config.Config, tun *ctrl.Response, dpAuthToken string) dp.IncomingTunnel {
+	return dp.IncomingTunnel{ServerURL: cfg.ServerURL, TunnelID: tun.ID, AuthToken: dpAuthToken, Backoff: cfg.ReconnectBackoff()}
+}
+
 // handleHTTPProtocol delegates to tunnel package and TCP data-plane
 func handleHTTPProtocol(
 	ctx context.Context,
@@ -192,7 +198,7 @@ func handleHTTPProtocol(
 	reporter := dp.NewBackendStateReporter(cfg.Protocol)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- dp.StartDataPlaneServeIncomingContext(ctx, cfg.ServerURL, tun.ID, runtime, reporter, dpAuthToken, lifecycleSignal(terminal))
+		errCh <- dp.StartDataPlaneServeIncomingContext(ctx, incomingTunnel(cfg, tun, dpAuthToken), runtime, reporter, lifecycleSignal(terminal))
 	}()
 
 	fmt.Printf("💡 If the local %s backend is unavailable, the tunnel remains active; later incoming traffic retries it.\n", strings.ToUpper(cfg.Protocol))
@@ -216,7 +222,7 @@ func handleTCPServeIncoming(
 	reporter := dp.NewBackendStateReporter(cfg.Protocol)
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- dp.StartDataPlaneServeIncomingContext(ctx, cfg.ServerURL, tun.ID, runtime, reporter, dpAuthToken, lifecycleSignal(terminal))
+		errCh <- dp.StartDataPlaneServeIncomingContext(ctx, incomingTunnel(cfg, tun, dpAuthToken), runtime, reporter, lifecycleSignal(terminal))
 	}()
 	log.Printf("INFO: TCP expose-local mode active; backend target %s", cfg.TargetAddr)
 	fmt.Printf("\n🔌 Serving TCP over data-plane (expose-local). Backend: %s\n", cfg.TargetAddr)
@@ -266,9 +272,7 @@ func handleUDPExposeLocal(
 		// the stream-dial reporter here would announce a reachable backend before
 		// any datagram response proves it, so UDP keeps its existing data path
 		// without TCP-style up/down transition messages.
-		errCh <- dp.StartDataPlaneServeIncomingUDPContext(
-			ctx, cfg.ServerURL, tun.ID, runtime, nil, authToken, lifecycleSignal(terminal),
-		)
+		errCh <- dp.StartDataPlaneServeIncomingUDPContext(ctx, incomingTunnel(cfg, tun, authToken), runtime, nil, lifecycleSignal(terminal))
 	}()
 	log.Printf("INFO: UDP expose-local mode active; backend target %s", cfg.TargetAddr)
 	fmt.Printf("\n🔌 Serving UDP over data-plane (expose-local). Backend: %s\n", cfg.TargetAddr)

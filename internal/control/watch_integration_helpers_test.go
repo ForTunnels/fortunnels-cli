@@ -1,5 +1,3 @@
-//go:build integration
-
 // SPDX-License-Identifier: PROPRIETARY
 // Copyright (c) 2026 ForTunnels
 
@@ -35,7 +33,6 @@ func handleControlMessage(
 	intervalCh chan<- time.Duration,
 	done chan struct{},
 	doneOnce *sync.Once,
-	defaultWatchInterval time.Duration,
 	lastStatus *string,
 ) bool {
 	return NewWatcher(nil).handleControlMessage(
@@ -44,7 +41,7 @@ func handleControlMessage(
 		intervalCh,
 		done,
 		doneOnce,
-		defaultWatchInterval,
+		10*time.Second,
 		lastStatus,
 	)
 }

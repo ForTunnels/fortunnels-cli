@@ -20,6 +20,7 @@ const (
 	envConfigPath         = "FORTUNNELS_CONFIG"
 	errMsgConfigVersion   = "config version must be 3"
 	errMsgConfigAuthtoken = "agent.authtoken is required" //nolint:gosec // user-facing validation message, not a secret
+	goosWindows           = "windows"
 )
 
 // FileConfig is the on-disk fortunnels.yml schema (version 3).
@@ -44,7 +45,7 @@ func DefaultConfigPath() (string, error) {
 }
 
 func userConfigBaseDir() (string, error) {
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == goosWindows {
 		local := strings.TrimSpace(os.Getenv("LOCALAPPDATA"))
 		if local == "" {
 			return "", errors.New("LOCALAPPDATA is not set")
@@ -87,9 +88,8 @@ func SaveAuthtoken(path, token string) error {
 	if token == "" {
 		return errors.New("authtoken is empty")
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create config dir: %w", err)
+	if err := secureConfigDir(filepath.Dir(path)); err != nil {
+		return err
 	}
 	fc := &FileConfig{Version: fileConfigVersion}
 	fc.Agent.Authtoken = token
@@ -98,12 +98,45 @@ func SaveAuthtoken(path, token string) error {
 		return fmt.Errorf("marshal config: %w", err)
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, out, 0o600); err != nil {
+	if err := writeOwnerOnlyFile(tmp, out); err != nil {
 		return fmt.Errorf("write config: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("save config: %w", err)
+	}
+	return nil
+}
+
+// secureConfigDir creates a missing config directory owner-only. An existing
+// directory keeps its mode: the token file itself is always written 0600, and
+// a directory mode change would need a security-scanner exception.
+func secureConfigDir(dir string) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	return nil
+}
+
+// writeOwnerOnlyFile writes data to a freshly created 0600 file. os.WriteFile
+// keeps the mode of an existing file, so a stale world-readable temp file is
+// removed first, and O_EXCL refuses a file or symlink planted in between.
+func writeOwnerOnlyFile(name string, data []byte) error {
+	if err := os.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	f, err := os.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		_ = f.Close()
+		_ = os.Remove(name)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(name)
+		return err
 	}
 	return nil
 }
