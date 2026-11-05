@@ -111,7 +111,7 @@ func TestReverseUDPReconnectsAndForwardsAfterStreamInterruption(t *testing.T) {
 		SmuxKeepAliveInterval: 30 * time.Second,
 		SmuxKeepAliveTimeout:  90 * time.Second,
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	strategy := NewStrategy(
 		"ws", server.URL, "qa-reverse-udp", "qa-auth", backendAddr, listenAddr,
 		runtime, config.EncryptionSettings{}, 10*time.Millisecond, 20*time.Millisecond,

@@ -189,7 +189,7 @@ func TestValidatePositionalArgs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			err := validatePositionalArgs(tt.args)
 			if tt.wantErr {
-				assert.Error(t, err)
+				require.Error(t, err)
 				assert.ErrorContains(t, err, tt.errContains)
 			} else {
 				assert.NoError(t, err)
@@ -301,7 +301,7 @@ func TestApplySecretSourcesFromEnv(t *testing.T) {
 func TestApplySecretSourcesFilePrecedence(t *testing.T) {
 	t.Setenv("FORTUNNELS_TOKEN", "env-token")
 
-	f, err := os.CreateTemp("", "token")
+	f, err := os.CreateTemp(t.TempDir(), "token")
 	require.NoError(t, err, "CreateTemp(): %v")
 	defer os.Remove(f.Name())
 	if _, err := f.WriteString("file-token"); err != nil {

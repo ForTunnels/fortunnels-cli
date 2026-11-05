@@ -2,6 +2,9 @@ run:
   timeout: 3m
   modules-download-mode: readonly
 
+# The client is published as open source, so on top of the defect set it keeps
+# the readability checks people reading the code rely on: formatting, import
+# grouping, line length, naming and comment style, spelling and simplifications.
 linters-settings:
   gci:
     sections:
@@ -20,8 +23,9 @@ linters-settings:
   goimports:
     local-prefixes: github.com/fortunnels
   govet:
-    enable:
-      - shadow
+    enable-all: true
+    disable:
+      - fieldalignment
   dupl:
     threshold: 50
   funlen:
@@ -33,6 +37,11 @@ linters-settings:
     line-length: 200
   misspell:
     locale: US
+  testifylint:
+    # encoded-compare turns exact byte comparisons into whitespace-insensitive
+    # JSONEq; wire formats and cipher round-trips need the exact form.
+    disable:
+      - encoded-compare
   nolintlint:
     allow-unused: false
     require-explanation: true
@@ -53,6 +62,7 @@ linters-settings:
           - github.com/quic-go/quic-go
           - github.com/stretchr/testify
           - github.com/xtaci/smux
+          - go.uber.org/goleak
           - golang.org/x/crypto
           - golang.org/x/term
           - gopkg.in/yaml.v3
@@ -61,11 +71,13 @@ linters-settings:
 linters:
   enable:
     - bodyclose
+    - contextcheck
     - copyloopvar
     - depguard
     - dogsled
     - dupl
     - errcheck
+    - errchkjson
     - errname
     - errorlint
     - exhaustive
@@ -78,21 +90,23 @@ linters:
     - gofmt
     - goimports
     - goprintffuncname
-    - gosec
     - gosimple
     - govet
-    - ineffassign
     - lll
     - misspell
     - nakedret
+    - nilerr
     - noctx
     - nolintlint
+    - recvcheck
     - revive
     - staticcheck
     - stylecheck
+    - testifylint
     - unconvert
     - unparam
     - unused
+    - usetesting
     - whitespace
 
 issues:
@@ -105,9 +119,10 @@ issues:
         - errcheck
         - bodyclose
         - goconst
-        - gosec
         - revive
         - gocritic
+        - contextcheck
+        - errchkjson
     - path: internal/config/flags\.go
       linters:
         - dupl
@@ -119,3 +134,5 @@ issues:
         - typecheck
   max-issues-per-linter: 0
   max-same-issues: 0
+  # The default keeps one issue per line, so a second finding there surfaces a fix cycle later.
+  uniq-by-line: false

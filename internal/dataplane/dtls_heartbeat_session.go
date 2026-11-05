@@ -58,6 +58,20 @@ func dtlsBootstrapRecord(authToken, tunnelID, udpDst string) ([]byte, error) {
 	})
 }
 
+// dtlsAckState tracks the framing negotiated by the server's flow ack record.
+type dtlsAckState struct {
+	mode     atomic.Int32
+	acked    chan struct{}
+	once     sync.Once
+	deadline time.Time
+}
+
+// dtlsPeerAddr holds the source address of the last local UDP datagram.
+type dtlsPeerAddr struct {
+	mu   sync.RWMutex
+	addr *net.UDPAddr
+}
+
 // dtlsUDPSession relays one DTLS reverse UDP session. It starts undecided,
 // switches to flow framing for good on the first server ack (late acks
 // included) and starts the heartbeat then; when the first local datagram finds
@@ -69,19 +83,15 @@ type dtlsUDPSession struct {
 	opts  dtlsUDPSessionOptions
 	flows *flowRegistry
 	// writeMu serializes record writes from the local relay and the heartbeat.
-	writeMu     sync.Mutex
-	mode        atomic.Int32
-	acked       chan struct{}
-	ackOnce     sync.Once
-	ackDeadline time.Time
+	writeMu sync.Mutex
+	ack     dtlsAckState
 	// clock is monotonic time since the session started; lastRecv is its
 	// reading at the last record from the server, so wall-clock steps never
 	// count as silence or hide it.
-	clock     func() time.Duration
-	lastRecv  atomic.Int64
-	lastSrcMu sync.RWMutex
-	lastSrc   *net.UDPAddr
-	errCh     chan error
+	clock    func() time.Duration
+	lastRecv atomic.Int64
+	lastSrc  dtlsPeerAddr
+	errCh    chan error
 }
 
 // runDTLSUDPSession relays datagrams between the local socket and a DTLS
@@ -93,7 +103,7 @@ func runDTLSUDPSession(ctx context.Context, conn io.ReadWriter, uc *net.UDPConn,
 	defer cancel()
 	s := &dtlsUDPSession{
 		conn: conn, local: uc, opts: opts, flows: newUDPFlowRegistry(), clock: opts.clock,
-		acked: make(chan struct{}), ackDeadline: time.Now().Add(opts.ackWait), errCh: make(chan error, 3),
+		ack: dtlsAckState{acked: make(chan struct{}), deadline: time.Now().Add(opts.ackWait)}, errCh: make(chan error, 3),
 	}
 	if s.clock == nil {
 		start := time.Now()
@@ -151,9 +161,9 @@ func (s *dtlsUDPSession) sendLocalDatagram(ctx context.Context, src *net.UDPAddr
 		logDTLSRecordDrop(drops, len(payload))
 		return nil
 	}
-	s.lastSrcMu.Lock()
-	s.lastSrc = src
-	s.lastSrcMu.Unlock()
+	s.lastSrc.mu.Lock()
+	s.lastSrc.addr = src
+	s.lastSrc.mu.Unlock()
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
 	return writeUDPDatagramRecord(s.conn, payload)
@@ -162,20 +172,20 @@ func (s *dtlsUDPSession) sendLocalDatagram(ctx context.Context, src *net.UDPAddr
 // framing returns the session's framing, deciding it on first use: it waits
 // for the ack until ackDeadline and falls back to legacy framing after that.
 func (s *dtlsUDPSession) framing(ctx context.Context) int32 {
-	if mode := s.mode.Load(); mode != dtlsFramingUndecided {
+	if mode := s.ack.mode.Load(); mode != dtlsFramingUndecided {
 		return mode
 	}
-	timer := time.NewTimer(time.Until(s.ackDeadline))
+	timer := time.NewTimer(time.Until(s.ack.deadline))
 	defer timer.Stop()
 	select {
-	case <-s.acked:
+	case <-s.ack.acked:
 	case <-ctx.Done():
 	case <-timer.C:
-		if s.mode.CompareAndSwap(dtlsFramingUndecided, dtlsFramingLegacy) {
+		if s.ack.mode.CompareAndSwap(dtlsFramingUndecided, dtlsFramingLegacy) {
 			log.Printf("dtls: server did not acknowledge flow framing within %s; using legacy record framing", s.opts.ackWait)
 		}
 	}
-	return s.mode.Load()
+	return s.ack.mode.Load()
 }
 
 func (s *dtlsUDPSession) writeRecord(record []byte) error {
@@ -216,22 +226,22 @@ func (s *dtlsUDPSession) handleServerRecord(ctx context.Context, record []byte, 
 	if _, ok := dtlsControlOp(record); ok {
 		return nil // A pong only proves the server is alive (lastRecv).
 	}
-	if s.mode.Load() == dtlsFramingFlow {
+	if s.ack.mode.Load() == dtlsFramingFlow {
 		flowID, payload, err := parseUDPFlowRecord(record, maxDTLSFlowPayload)
 		if err != nil {
 			logDTLSPayloadDrop(drops, len(record), maxDTLSFlowPayload)
-			return nil
+			return nil //nolint:nilerr // a malformed record is counted and dropped; the session stays up
 		}
 		return deliverUDPFlowDatagram(s.local, s.flows, flowID, payload, drops)
 	}
 	payload, err := parseUDPDatagramRecord(record)
 	if err != nil {
 		logDTLSRecordDrop(drops, len(payload))
-		return nil
+		return nil //nolint:nilerr // a malformed record is counted and dropped; the session stays up
 	}
-	s.lastSrcMu.RLock()
-	dst := s.lastSrc
-	s.lastSrcMu.RUnlock()
+	s.lastSrc.mu.RLock()
+	dst := s.lastSrc.addr
+	s.lastSrc.mu.RUnlock()
 	if dst == nil {
 		return nil
 	}
@@ -242,11 +252,11 @@ func (s *dtlsUDPSession) handleServerRecord(ctx context.Context, record []byte, 
 // acknowledge switches the session to flow framing for good; the first ack
 // also releases a datagram waiting in framing and starts the heartbeat.
 func (s *dtlsUDPSession) acknowledge(ctx context.Context, interval time.Duration) {
-	if previous := s.mode.Swap(dtlsFramingFlow); previous == dtlsFramingLegacy {
+	if previous := s.ack.mode.Swap(dtlsFramingFlow); previous == dtlsFramingLegacy {
 		log.Printf("dtls: late flow framing acknowledgement; switching from legacy record framing")
 	}
-	s.ackOnce.Do(func() {
-		close(s.acked)
+	s.ack.once.Do(func() {
+		close(s.ack.acked)
 		go s.heartbeat(ctx, interval)
 	})
 }

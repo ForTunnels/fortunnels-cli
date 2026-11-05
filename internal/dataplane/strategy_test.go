@@ -105,7 +105,7 @@ func TestNewStrategy(t *testing.T) {
 
 func TestRunReconnecting_RetriesTransientAndStopsOnPermanent(t *testing.T) {
 	t.Run("pre-canceled context", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
 		attempts := 0
 		err := runReconnecting(ctx, time.Second, time.Second, func(context.Context) error { attempts++; return nil })
@@ -114,7 +114,7 @@ func TestRunReconnecting_RetriesTransientAndStopsOnPermanent(t *testing.T) {
 	})
 	t.Run("transient failures then success", func(t *testing.T) {
 		attempts := 0
-		err := runReconnecting(context.Background(), time.Millisecond, 2*time.Millisecond, func(context.Context) error {
+		err := runReconnecting(t.Context(), time.Millisecond, 2*time.Millisecond, func(context.Context) error {
 			attempts++
 			if attempts < 3 {
 				return errors.New("transport failed")
@@ -127,7 +127,7 @@ func TestRunReconnecting_RetriesTransientAndStopsOnPermanent(t *testing.T) {
 	t.Run("permanent failure", func(t *testing.T) {
 		attempts := 0
 		cause := errors.New("invalid listener")
-		err := runReconnecting(context.Background(), time.Second, time.Second, func(context.Context) error {
+		err := runReconnecting(t.Context(), time.Second, time.Second, func(context.Context) error {
 			attempts++
 			return fmt.Errorf("local setup: %w", permanentError{cause})
 		})
@@ -135,7 +135,7 @@ func TestRunReconnecting_RetriesTransientAndStopsOnPermanent(t *testing.T) {
 		require.Equal(t, 1, attempts)
 	})
 	t.Run("cancel during backoff", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		attempted := make(chan struct{})
 		done := make(chan error, 1)
@@ -169,7 +169,7 @@ func TestReconnectRunner_HealthySessionResetsBackoff(t *testing.T) {
 		return nil
 	}
 	attempts := 0
-	err := runner.run(context.Background(), func(context.Context) error {
+	err := runner.run(t.Context(), func(context.Context) error {
 		attempts++
 		if attempts == 4 {
 			// A session that stays up far longer than the maximum backoff, then drops.
@@ -192,7 +192,7 @@ func TestRunReconnecting_DTLSRemoteDNSFailuresRetry(t *testing.T) {
 		{Name: "remote.example", Err: "server misbehaving", IsTemporary: true},
 	} {
 		t.Run(dnsErr.Err, func(t *testing.T) {
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			attempts := 0
 			resolveDTLSServerAddr = func(network, address string) (*net.UDPAddr, error) {
@@ -231,7 +231,7 @@ func TestRunReconnecting_DTLSInvalidServerConfigIsPermanent(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			attempts := 0
-			err := runReconnecting(context.Background(), time.Hour, time.Hour, func(ctx context.Context) error {
+			err := runReconnecting(t.Context(), time.Hour, time.Hour, func(ctx context.Context) error {
 				attempts++
 				return startDTLSDataPlaneUDPContext(ctx, tt.serverURL, tt.port, "t1", "auth", "127.0.0.1:53", "127.0.0.1:0", tt.caPath)
 			})
@@ -246,14 +246,14 @@ func TestStartDataPlaneUDPContext_ListenFailureIsPermanent(t *testing.T) {
 	listener, err := net.ListenPacket("udp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer listener.Close()
-	err = StartDataPlaneUDPContext(context.Background(), "http://127.0.0.1:1", "t1", "127.0.0.1:53", listener.LocalAddr().String(), config.RuntimeSettings{}, config.EncryptionSettings{}, "auth")
+	err = StartDataPlaneUDPContext(t.Context(), "http://127.0.0.1:1", "t1", "127.0.0.1:53", listener.LocalAddr().String(), config.RuntimeSettings{}, config.EncryptionSettings{}, "auth")
 	var permanent permanentError
 	require.ErrorAs(t, err, &permanent)
 	require.Contains(t, err.Error(), "listen udp")
 	for _, kind := range []string{"ws", "quic", "dtls"} {
 		t.Run(kind, func(t *testing.T) {
 			strategy := NewStrategy(kind, "http://127.0.0.1:1", "t1", "auth", "127.0.0.1:53", listener.LocalAddr().String(), config.RuntimeSettings{}, config.EncryptionSettings{}, time.Hour, time.Hour)
-			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 			var permanent permanentError
 			require.ErrorAs(t, strategy.RunContext(ctx), &permanent)

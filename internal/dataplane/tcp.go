@@ -142,7 +142,7 @@ func startIncomingDataPlaneContext(
 	defer close(stopCloser)
 	loop := incomingStreamLoop{
 		sessions: mgr,
-		retry:    newReconnectBackoff(mgr.boInit, mgr.boMax),
+		retry:    newReconnectBackoff(mgr.bounds.init, mgr.bounds.max),
 		wait:     waitRetryDelay,
 		dispatch: func(s io.ReadWriteCloser) {
 			go func() {
@@ -344,7 +344,7 @@ func isBenignBridgeCopyError(err error) bool {
 	return support.IsBenignCopyError(err) || os.IsTimeout(err)
 }
 
-func closeWriteIfPossible(c interface{}) {
+func closeWriteIfPossible(c net.Conn) {
 	type closeWriter interface{ CloseWrite() error }
 	if cw, ok := c.(closeWriter); ok {
 		if err := cw.CloseWrite(); err != nil {

@@ -76,12 +76,15 @@ type ListEventsResponse struct {
 	HasMore    bool    `json:"has_more"`
 }
 
+// WaitMatcher is the JSON object of a wait matcher as sent on the wire.
+type WaitMatcher map[string]any
+
 // WaitRequest is the token-authenticated wait payload.
 type WaitRequest struct {
-	EndpointID string         `json:"endpoint_id"`
-	Cursor     string         `json:"cursor,omitempty"`
-	TimeoutMS  int            `json:"timeout_ms"`
-	Matcher    map[string]any `json:"matcher,omitempty"`
+	EndpointID string      `json:"endpoint_id"`
+	Cursor     string      `json:"cursor,omitempty"`
+	TimeoutMS  int         `json:"timeout_ms"`
+	Matcher    WaitMatcher `json:"matcher,omitempty"`
 }
 
 // WaitResponse is the wait outcome; Event is nil when nothing matched.
@@ -106,16 +109,21 @@ type ClearResponse struct {
 	Count  int  `json:"count"`
 }
 
+// MockRuleMatch is the request-matching part of a mock rule (flattened on the wire).
+type MockRuleMatch struct {
+	Method   string `json:"method"`
+	PathMode string `json:"path_mode"`
+	Path     string `json:"path"`
+	MatchAll bool   `json:"match_all"`
+}
+
 // MockRule is the Stage 7 mock rule projection.
 type MockRule struct {
-	ID            string   `json:"id"`
-	TunnelID      string   `json:"tunnel_id"`
-	Priority      int      `json:"priority"`
-	Enabled       bool     `json:"enabled"`
-	Method        string   `json:"method"`
-	PathMode      string   `json:"path_mode"`
-	Path          string   `json:"path"`
-	MatchAll      bool     `json:"match_all"`
+	ID       string `json:"id"`
+	TunnelID string `json:"tunnel_id"`
+	Priority int    `json:"priority"`
+	Enabled  bool   `json:"enabled"`
+	MockRuleMatch
 	Response      MockResp `json:"response"`
 	MaxUses       *int     `json:"max_uses,omitempty"`
 	RemainingUses *int     `json:"remaining_uses,omitempty"`

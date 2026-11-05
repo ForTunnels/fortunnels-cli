@@ -75,7 +75,7 @@ func TestStartDataPlaneUDPContext_WrapFailureIsPermanent(t *testing.T) {
 	encryption := config.EncryptionSettings{Enabled: true, PSK: "test-secret"}
 	listenAddr := "127.0.0.1:0"
 
-	err := StartDataPlaneUDPContext(context.Background(), server.URL, "t1", "127.0.0.1:53", listenAddr, runtime, encryption, "auth")
+	err := StartDataPlaneUDPContext(t.Context(), server.URL, "t1", "127.0.0.1:53", listenAddr, runtime, encryption, "auth")
 	var permanent permanentError
 	require.ErrorAs(t, err, &permanent)
 	require.ErrorIs(t, err, wrapFailure)
@@ -86,7 +86,7 @@ func TestStartDataPlaneUDPContext_WrapFailureIsPermanent(t *testing.T) {
 	}
 	require.EqualValues(t, 1, websocketConnections.Load())
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	strategy := NewStrategy("ws", server.URL, "t1", "auth", "127.0.0.1:53", listenAddr, runtime, encryption, time.Hour, time.Hour)
 	err = strategy.RunContext(ctx)

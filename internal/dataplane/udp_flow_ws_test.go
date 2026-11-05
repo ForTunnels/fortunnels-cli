@@ -135,7 +135,7 @@ func freeLocalUDPAddr(t *testing.T) string {
 func runReverseUDPClient(t *testing.T, serverURL string) string {
 	t.Helper()
 	listenAddr := freeLocalUDPAddr(t)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		done <- StartDataPlaneUDPContext(ctx, serverURL, "t-flow", "127.0.0.1:9", listenAddr, testUDPRuntime(), config.EncryptionSettings{}, "tok")

@@ -2,7 +2,6 @@ package control
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,7 +72,7 @@ func TestTrafficQuotaCanonicalIndicatorIsTerminal(t *testing.T) {
 	var quotaErr *TrafficQuotaError
 	require.ErrorAs(t, err, &quotaErr)
 	require.True(t, quotaErr.ResetAt.Equal(resetAt))
-	require.False(t, errors.Is(err, nil))
+	require.Error(t, err)
 }
 
 func TestTrafficQuota_CurrentIndicatorWithoutLegacyAlias(t *testing.T) {
@@ -99,7 +98,7 @@ func TestTrafficQuota_CurrentIndicatorWithoutLegacyAlias(t *testing.T) {
 func TestTrafficQuota_TerminalMessageOnceAcrossSources(t *testing.T) {
 	resetAt := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 	out := &quotaTestOutput{}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	coordinator := NewTerminalCoordinator(out, cancel)
 
 	signals := []error{
@@ -146,7 +145,7 @@ func TestTrafficQuota_AuthenticatedPollFallback(t *testing.T) {
 		}, nil
 	})}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 	terminal := make(chan error, 1)
 	go RunFallbackLifecyclePollerWithReasonContext(ctx, client, "https://server.test", "tunnel-1", "signed-token", func(err error) {

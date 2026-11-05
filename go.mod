@@ -2,7 +2,7 @@ module github.com/fortunnels/client
 
 go 1.26.0
 
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/gorilla/websocket v1.5.3
@@ -10,6 +10,7 @@ require (
 	github.com/quic-go/quic-go v0.59.1
 	github.com/stretchr/testify v1.11.1
 	github.com/xtaci/smux v1.5.57
+	go.uber.org/goleak v1.3.0
 	golang.org/x/crypto v0.56.0
 	gopkg.in/yaml.v3 v3.0.1
 )

@@ -395,16 +395,19 @@ Project uses custom linter configuration (`.golangci.yml`) tuned for CLI apps:
 
 - `make format` - rewrite sources (`gofumpt -w`, `goimports -w`)
 - `make format-check` - read-only format gate (fails if sources need formatting)
-- `make check` - full checks (`format-check`, go vet, tests, golangci-lint, govulncheck, staticcheck, ineffassign, misspell, gocyclo)
+- `make lint` - `format-check`, then golangci-lint with `.golangci.yml` and `.golangci-structure.yml`
+- `make check` - full checks (go vet, tests, `make lint`, govulncheck)
 - All checks run automatically on `make build` (checks do not rewrite sources)
 
 Strictness highlights:
 
-- Cyclomatic complexity `gocyclo` limited to 15 (`gocyclo -over 15`)
-- `funlen` max 80 lines and 60 statements per function
-- `lll` max line length 200
+- Readability: `gofmt`, `goimports` and `gci` import grouping, `lll` (max line length 200), `whitespace`, `misspell`, `stylecheck`, `gosimple`, `revive`, `gocritic` style checks
+- Defects: `staticcheck`, `govet`, `errcheck`, `errorlint`, `bodyclose`, `noctx`, `contextcheck`, `nilerr`, `testifylint`
+- `funlen` max 120 lines and 120 statements per function, `gocyclo` limited to 35
+- Changed lines also meet `.golangci-structure.yml`: `funlen` 60 lines / 40 statements, `gocyclo` 10, at most 4 arguments
 - Duplicate finder (`dupl`) triggers at 50 tokens
 - Any `//nolint` must include an explanation and list of linters
+- Docs and YAML: `.markdownlint-cli2.jsonc` and `.yamllint.yml`
 
 ## Supported platforms
 

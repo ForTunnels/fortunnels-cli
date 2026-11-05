@@ -8,7 +8,7 @@ import (
 	"io"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/fortunnels/client/internal/config"
 	sec "github.com/fortunnels/client/internal/security"
@@ -93,7 +93,7 @@ func TestWrapClientStream(t *testing.T) {
 		}
 
 		result, err := WrapClientStream(stream, "tunnel-123", enc)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		if result != stream {
 			t.Error("WrapClientStream() should return original stream when encryption is disabled")
 		}
@@ -107,7 +107,7 @@ func TestWrapClientStream(t *testing.T) {
 		}
 
 		result, err := WrapClientStream(stream, "tunnel-123", enc)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		if result == stream {
 			t.Error("WrapClientStream() should return wrapped stream when encryption is enabled")
 		}
@@ -127,7 +127,7 @@ func TestWrapClientStream(t *testing.T) {
 		}
 
 		result, err := WrapClientStream(stream, "tunnel-123", enc)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		// Should still wrap even with empty PSK (validation happens elsewhere)
 		if result == stream {
 			t.Error("WrapClientStream() should return wrapped stream even with empty PSK")

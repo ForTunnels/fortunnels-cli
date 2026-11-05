@@ -24,13 +24,12 @@ const (
 // the size limit the least recently active flow is evicted. Entries form a list
 // ordered by activity, newest first.
 type flowRegistry struct {
-	mu     sync.RWMutex
-	flows  map[string]*flowEntry
-	newest *flowEntry
-	oldest *flowEntry
-	ttl    time.Duration
-	limit  int
-	now    func() time.Time
+	mu      sync.RWMutex
+	flows   map[string]*flowEntry
+	recency flowRecency
+	ttl     time.Duration
+	limit   int
+	now     func() time.Time
 	// byNum indexes numerically identified flows (reverse UDP flow framing);
 	// it stays nil for registries used only by flow ID string.
 	byNum   map[uint32]*flowEntry
@@ -154,56 +153,62 @@ func (r *flowRegistry) activeLocked(flowID string) (*flowEntry, bool) {
 		return nil, false
 	}
 	entry.lastSeen = now
-	r.unlinkLocked(entry)
-	r.pushNewestLocked(entry)
+	r.recency.unlink(entry)
+	r.recency.pushNewest(entry)
 	return entry, true
 }
 
 func (r *flowRegistry) insertLocked(flowID string, addr *net.UDPAddr) *flowEntry {
-	for len(r.flows) >= r.limit && r.oldest != nil {
-		r.removeLocked(r.oldest)
+	for len(r.flows) >= r.limit && r.recency.oldest != nil {
+		r.removeLocked(r.recency.oldest)
 	}
 	entry := &flowEntry{id: flowID, addr: addr, lastSeen: r.now()}
 	r.flows[flowID] = entry
-	r.pushNewestLocked(entry)
+	r.recency.pushNewest(entry)
 	return entry
 }
 
 // expireLocked drops flows from the oldest end while they are idle past ttl.
 func (r *flowRegistry) expireLocked(now time.Time) {
-	for r.oldest != nil && now.Sub(r.oldest.lastSeen) >= r.ttl {
-		r.removeLocked(r.oldest)
+	for r.recency.oldest != nil && now.Sub(r.recency.oldest.lastSeen) >= r.ttl {
+		r.removeLocked(r.recency.oldest)
 	}
 }
 
 func (r *flowRegistry) removeLocked(entry *flowEntry) {
-	r.unlinkLocked(entry)
+	r.recency.unlink(entry)
 	delete(r.flows, entry.id)
 	if entry.num != 0 {
 		delete(r.byNum, entry.num)
 	}
 }
 
-func (r *flowRegistry) pushNewestLocked(entry *flowEntry) {
-	entry.newer, entry.older = nil, r.newest
-	if r.newest != nil {
-		r.newest.newer = entry
-	} else {
-		r.oldest = entry
-	}
-	r.newest = entry
+// flowRecency is the doubly linked list of flows ordered by last activity.
+type flowRecency struct {
+	newest *flowEntry
+	oldest *flowEntry
 }
 
-func (r *flowRegistry) unlinkLocked(entry *flowEntry) {
+func (l *flowRecency) pushNewest(entry *flowEntry) {
+	entry.newer, entry.older = nil, l.newest
+	if l.newest != nil {
+		l.newest.newer = entry
+	} else {
+		l.oldest = entry
+	}
+	l.newest = entry
+}
+
+func (l *flowRecency) unlink(entry *flowEntry) {
 	if entry.newer != nil {
 		entry.newer.older = entry.older
-	} else if r.newest == entry {
-		r.newest = entry.older
+	} else if l.newest == entry {
+		l.newest = entry.older
 	}
 	if entry.older != nil {
 		entry.older.newer = entry.newer
-	} else if r.oldest == entry {
-		r.oldest = entry.newer
+	} else if l.oldest == entry {
+		l.oldest = entry.newer
 	}
 	entry.newer, entry.older = nil, nil
 }

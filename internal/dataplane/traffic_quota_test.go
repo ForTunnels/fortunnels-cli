@@ -33,7 +33,7 @@ func TestTrafficQuota_InBandFlatLifecyclePayload(t *testing.T) {
 }
 
 func TestTrafficQuota_TransportCancellationNoRetry(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	started := make(chan struct{})
 	var starts atomic.Int32
@@ -79,7 +79,7 @@ func TestTrafficQuota_TransportCancellationStopsReconnectDial(t *testing.T) {
 	}()
 
 	mgr := NewManager(server.URL, "tunnel-1", "signed-token", time.Second, time.Second, config.RuntimeSettings{})
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		_, err := mgr.EnsureSessionContext(ctx)

@@ -27,7 +27,7 @@ func TestRunLifecycleRetries_SubscribedSessionResetsBackoff(t *testing.T) {
 	}
 	attempts := 0
 	var waits []time.Duration
-	runLifecycleRetries(context.Background(), func(context.Context) lifecycleAttemptResult {
+	runLifecycleRetries(t.Context(), func(context.Context) lifecycleAttemptResult {
 		result := results[attempts]
 		attempts++
 		return result
@@ -65,7 +65,7 @@ func TestLifecycleWatchAttempt_ReportsServerSubscription(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			runtime := config.RuntimeSettings{PingInterval: time.Hour, PingTimeout: time.Second}
 

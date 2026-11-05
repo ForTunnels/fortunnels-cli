@@ -160,7 +160,7 @@ func startUDPStreamForwardHarness(t *testing.T) *udpStreamForwardHarness {
 	require.NoError(t, err)
 	peer, err := net.DialUDP("udp", nil, uc.LocalAddr().(*net.UDPAddr))
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	h := &udpStreamForwardHarness{
 		peer:   peer,
 		conn:   &limitedDatagramConn{limit: 600, sent: make(chan []byte, 16)},

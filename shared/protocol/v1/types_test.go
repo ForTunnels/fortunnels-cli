@@ -65,20 +65,20 @@ func TestTunnelLimitIndicatorsJSON(t *testing.T) {
 	lifetime, ok := indicators["lifetime"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "limited", lifetime["state"])
-	require.Equal(t, float64(120), lifetime["used_seconds"])
-	require.Equal(t, float64(480), lifetime["remaining_seconds"])
-	require.Equal(t, float64(600), lifetime["total_seconds"])
+	require.InDelta(t, float64(120), lifetime["used_seconds"], 1e-9)
+	require.InDelta(t, float64(480), lifetime["remaining_seconds"], 1e-9)
+	require.InDelta(t, float64(600), lifetime["total_seconds"], 1e-9)
 	require.NotNil(t, lifetime["reset_at"])
 
 	traffic, ok := indicators["traffic"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "limited", traffic["state"])
-	require.Equal(t, float64(1024), traffic["used_bytes"])
+	require.InDelta(t, float64(1024), traffic["used_bytes"], 1e-9)
 
 	httpRPM, ok := indicators["http_rpm"].(map[string]any)
 	require.True(t, ok)
 	require.Equal(t, "limited", httpRPM["state"])
-	require.Equal(t, float64(7), httpRPM["remaining_requests"])
+	require.InDelta(t, float64(7), httpRPM["remaining_requests"], 1e-9)
 
 	unavailable := Tunnel{
 		ID: "x",

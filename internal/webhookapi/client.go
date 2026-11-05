@@ -93,7 +93,7 @@ func asError(err error, target **Error) bool {
 // Send dispatches one test event.
 func (c *Client) Send(ctx context.Context, req *SendRequest) (SendResult, error) {
 	var out SendResult
-	err := c.doJSON(ctx, http.MethodPost, apiBase+"/events/send", nil, req, &out)
+	err := c.doJSON(ctx, &jsonCall{method: http.MethodPost, path: apiBase + "/events/send", body: req, out: &out})
 	return out, err
 }
 
@@ -108,22 +108,24 @@ func (c *Client) ListEvents(ctx context.Context, endpointID, cursor string, limi
 		q.Set("limit", fmt.Sprintf("%d", limit))
 	}
 	var out ListEventsResponse
-	err := c.doJSON(ctx, http.MethodGet, apiBase+"/events", q, nil, &out)
+	err := c.doJSON(ctx, &jsonCall{method: http.MethodGet, path: apiBase + "/events", query: q, out: &out})
 	return out, err
 }
 
 // Wait blocks until a matching event arrives, the timeout expires, or the
 // context is canceled. Returns ErrTimeout-style Error on wait_timeout.
 func (c *Client) Wait(ctx context.Context, req WaitRequest) (WaitResponse, error) {
-	var out WaitResponse
-	err := c.doJSON(ctx, http.MethodPost, apiBase+"/events/wait", nil, req, &out)
-	return out, err
+	return postJSON[WaitResponse](ctx, c, "/events/wait", req)
 }
 
 // Clear deletes (or dry-run counts) test-generated events in scope.
 func (c *Client) Clear(ctx context.Context, req ClearRequest) (ClearResponse, error) {
-	var out ClearResponse
-	err := c.doJSON(ctx, http.MethodPost, apiBase+"/events/clear", nil, req, &out)
+	return postJSON[ClearResponse](ctx, c, "/events/clear", req)
+}
+
+func postJSON[T any](ctx context.Context, c *Client, path string, body requestPayload) (T, error) {
+	var out T
+	err := c.doJSON(ctx, &jsonCall{method: http.MethodPost, path: apiBase + path, body: body, out: &out})
 	return out, err
 }
 
@@ -134,7 +136,7 @@ func (c *Client) ListMock(ctx context.Context, endpointID string) ([]MockRule, e
 	var out struct {
 		Rules []MockRule `json:"rules"`
 	}
-	err := c.doJSON(ctx, http.MethodGet, apiBase+"/mock/rules", q, nil, &out)
+	err := c.doJSON(ctx, &jsonCall{method: http.MethodGet, path: apiBase + "/mock/rules", query: q, out: &out})
 	return out.Rules, err
 }
 
@@ -154,7 +156,7 @@ func (c *Client) CreateMock(ctx context.Context, endpointID string, in *MockRule
 		"max_uses":    in.MaxUses,
 		"enabled":     in.Enabled,
 	}
-	err := c.doJSON(ctx, http.MethodPost, apiBase+"/mock/rules", nil, body, &out)
+	err := c.doJSON(ctx, &jsonCall{method: http.MethodPost, path: apiBase + "/mock/rules", body: body, out: &out})
 	return out.Rule, err
 }
 
@@ -175,7 +177,7 @@ func (c *Client) UpdateMock(ctx context.Context, endpointID, ruleID string, in *
 		"version":     in.Version,
 		"enabled":     in.Enabled,
 	}
-	err := c.doJSON(ctx, http.MethodPatch, apiBase+"/mock/rules/"+url.PathEscape(ruleID), nil, body, &out)
+	err := c.doJSON(ctx, &jsonCall{method: http.MethodPatch, path: apiBase + "/mock/rules/" + url.PathEscape(ruleID), body: body, out: &out})
 	return out.Rule, err
 }
 
@@ -183,30 +185,28 @@ func (c *Client) UpdateMock(ctx context.Context, endpointID, ruleID string, in *
 func (c *Client) DeleteMock(ctx context.Context, endpointID, ruleID string) error {
 	q := url.Values{}
 	q.Set("endpoint_id", endpointID)
-	return c.doJSON(ctx, http.MethodDelete, apiBase+"/mock/rules/"+url.PathEscape(ruleID), q, nil, nil)
+	return c.doJSON(ctx, &jsonCall{method: http.MethodDelete, path: apiBase + "/mock/rules/" + url.PathEscape(ruleID), query: q})
 }
 
-func (c *Client) doJSON(ctx context.Context, method, path string, q url.Values, body, out any) error {
-	var reader io.Reader
-	if body != nil {
-		encoded, err := json.Marshal(body)
-		if err != nil {
-			return err
-		}
-		reader = bytes.NewReader(encoded)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, reader)
+// requestPayload is any JSON-encodable request body; nil sends no body.
+type requestPayload any
+
+// responseTarget is the pointer a JSON response is decoded into; nil discards it.
+type responseTarget any
+
+// jsonCall describes one API round trip.
+type jsonCall struct {
+	method string
+	path   string
+	query  url.Values
+	body   requestPayload
+	out    responseTarget
+}
+
+func (c *Client) doJSON(ctx context.Context, call *jsonCall) error {
+	req, err := c.newRequest(ctx, call)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
-	}
-	if q != nil {
-		req.URL.RawQuery = q.Encode()
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+		return err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -218,22 +218,47 @@ func (c *Client) doJSON(ctx context.Context, method, path string, q url.Values, 
 		return fmt.Errorf("read response: %w", err)
 	}
 	if resp.StatusCode >= 400 {
-		apiErr := &Error{Status: resp.StatusCode}
-		if err := json.Unmarshal(raw, apiErr); err != nil {
-			apiErr.Code = "http_error"
-			apiErr.Message = http.StatusText(resp.StatusCode)
-		}
-		if apiErr.Code == "" {
-			apiErr.Code = "http_error"
-			apiErr.Message = http.StatusText(resp.StatusCode)
-		}
-		return apiErr
+		return decodeAPIError(resp.StatusCode, raw)
 	}
-	if out == nil {
+	if call.out == nil {
 		return nil
 	}
-	if err := json.Unmarshal(raw, out); err != nil {
+	if err := json.Unmarshal(raw, call.out); err != nil {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil
+}
+
+func (c *Client) newRequest(ctx context.Context, call *jsonCall) (*http.Request, error) {
+	var reader io.Reader
+	if call.body != nil {
+		encoded, err := json.Marshal(call.body)
+		if err != nil {
+			return nil, err
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	req, err := http.NewRequestWithContext(ctx, call.method, c.baseURL+call.path, reader)
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	if call.query != nil {
+		req.URL.RawQuery = call.query.Encode()
+	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if call.body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return req, nil
+}
+
+func decodeAPIError(status int, raw []byte) *Error {
+	apiErr := &Error{Status: status}
+	if err := json.Unmarshal(raw, apiErr); err != nil || apiErr.Code == "" {
+		apiErr.Code = "http_error"
+		apiErr.Message = http.StatusText(status)
+	}
+	return apiErr
 }

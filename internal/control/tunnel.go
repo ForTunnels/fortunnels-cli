@@ -194,7 +194,9 @@ func rewriteIngressPublicURL(serverURL, publicURL string) string {
 
 // DeleteTunnelWithClient sends DELETE /api/tunnels?id=<id> using the given client.
 // Best-effort cleanup to avoid orphan tunnels when startup fails after creation.
-func DeleteTunnelWithClient(serverURL, tunnelID string, client *http.Client, bearer, csrf string) {
+// It keeps ctx values but not its cancellation, since cleanup usually runs after
+// the serve context is canceled.
+func DeleteTunnelWithClient(ctx context.Context, serverURL, tunnelID string, client *http.Client, bearer, csrf string) {
 	if tunnelID == "" {
 		return
 	}
@@ -203,7 +205,7 @@ func DeleteTunnelWithClient(serverURL, tunnelID string, client *http.Client, bea
 		hc = &http.Client{Timeout: 5 * time.Second}
 	}
 	log.Printf("[WARN] attempting cleanup of tunnel %s", tunnelID)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	params := url.Values{}
 	params.Set("id", tunnelID)

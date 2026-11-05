@@ -1,0 +1,125 @@
+# Structure profile (quality-toolchain skill, go.md "Structure profile"): limits that keep an agent's
+# change inside one small function, type and package. Existing code predates it, so this run reports
+# only issues in lines changed since master; .golangci.yml keeps the defect set and its baseline.
+run:
+  timeout: 3m
+  modules-download-mode: readonly
+
+output:
+  # The agent opens the file anyway; echoing each source line only costs tokens.
+  print-issued-lines: false
+
+linters-settings:
+  depguard:
+    rules:
+      one-way-per-concern:
+        deny:
+          - pkg: "log$"
+            desc: "log through log/slog"
+          - pkg: "github.com/sirupsen/logrus"
+            desc: "log through log/slog"
+          - pkg: "go.uber.org/zap"
+            desc: "log through log/slog"
+          - pkg: "github.com/rs/zerolog"
+            desc: "log through log/slog"
+          - pkg: "github.com/pkg/errors"
+            desc: "use errors and fmt.Errorf with %w"
+          - pkg: "github.com/google/wire"
+            desc: "wire dependencies by hand in cmd/client, where gopls and the code graph see them"
+          - pkg: "go.uber.org/fx"
+            desc: "wire dependencies by hand in cmd/client, where gopls and the code graph see them"
+          - pkg: "gorm.io/gorm"
+            desc: "write SQL so every query is visible in the source"
+      no-reflection:
+        files:
+          - "!$test"
+        deny:
+          - pkg: "reflect"
+            desc: "use concrete types or generics; reflection hides dependencies and fails only at run time"
+      hand-written-fakes:
+        files:
+          - "$test"
+        deny:
+          - pkg: "github.com/golang/mock"
+            desc: "write a small hand fake of the consumer-side interface"
+          - pkg: "go.uber.org/mock"
+            desc: "write a small hand fake of the consumer-side interface"
+          - pkg: "github.com/stretchr/testify/mock"
+            desc: "write a small hand fake of the consumer-side interface"
+  forbidigo:
+    analyze-types: true
+    # Scoped by the exclude-rules below, which match each message.
+    forbid:
+      - p: ^(fmt\.Print(f|ln)?|print|println)$
+        msg: log through log/slog; only cmd/ prints to the terminal
+      - p: ^time\.Sleep$
+        msg: tests must not wait on real time; use testing/synctest, a fake clock or require.Eventually
+      - p: ^time\.Now$
+        msg: domain code reads time from an injected Clock so tests stay deterministic
+  funlen:
+    lines: 60
+    statements: 40
+  gocognit:
+    min-complexity: 15
+  gocyclo:
+    min-complexity: 10
+  interfacebloat:
+    max: 3
+  ireturn:
+    # Constructors return concrete types so go-to-definition lands on the implementation.
+    allow: [anon, error, empty, stdlib, generic]
+  nestif:
+    min-complexity: 4
+  revive:
+    rules:
+      - name: context-as-argument
+      # Same-typed positional arguments and results get swapped; group them in a struct.
+      - name: argument-limit
+        arguments: [4]
+      - name: function-result-limit
+        arguments: [3]
+
+linters:
+  disable-all: true
+  enable:
+    - depguard
+    - err113
+    - forbidigo
+    - funlen
+    - gochecknoglobals
+    - gocognit
+    - gocyclo
+    - interfacebloat
+    - ireturn
+    - nestif
+    - revive
+
+issues:
+  new-from-merge-base: master
+  exclude-dirs:
+    - web/app/node_modules
+  exclude-rules:
+    - path: _test\.go
+      linters: [err113, funlen, gochecknoglobals, gocognit, gocyclo, ireturn, nestif]
+    - path: _test\.go
+      linters: [revive]
+      text: argument-limit|function-result-limit
+    - path: (^|/)cmd/
+      linters: [forbidigo]
+      text: log through log/slog
+    - path-except: _test\.go
+      linters: [forbidigo]
+      text: must not wait on real time
+    - path-except: /domain/
+      linters: [forbidigo]
+      text: injected Clock
+    # Grandfathered: these predate the profile; their signature lines changed only for ctx and
+    # contextcheck fixes. Shrink only: split the function, then delete its entry.
+    - path: internal/dataplane/session\.go
+      text: EnsureSessionContext
+    - path: internal/control/tunnel\.go
+      linters: [revive]
+      source: ^func DeleteTunnelWithClient\(
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false

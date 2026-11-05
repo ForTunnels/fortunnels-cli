@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -20,5 +19,5 @@ func TestAccountRequiredInvalidBearerHasNoGuestFallback(t *testing.T) {
 	require.Contains(t, err.Error(), "-login and -pass-stdin")
 	require.NotContains(t, err.Error(), "guest mode")
 	require.NotContains(t, err.Error(), "create a token")
-	require.False(t, errors.Is(err, accountRequiredCreateError{}))
+	require.NotErrorIs(t, err, accountRequiredCreateError{})
 }

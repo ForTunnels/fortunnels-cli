@@ -145,7 +145,7 @@ func runClientWorkflow(cfg *config.Config) error {
 		UserID:  tun.UserID,
 	}, cfg.Protocol); err != nil {
 		// Guest tunnel was created without valid auth; omit rejected bearer on cleanup.
-		ctrl.DeleteTunnelWithClient(cfg.ServerURL, tun.ID, httpClient, "", csrf)
+		ctrl.DeleteTunnelWithClient(context.Background(), cfg.ServerURL, tun.ID, httpClient, "", csrf)
 		return fmt.Errorf("❌ Authentication failed: %w", err)
 	}
 
@@ -203,7 +203,7 @@ func handleHTTPProtocol(
 
 	fmt.Printf("💡 If the local %s backend is unavailable, the tunnel remains active; later incoming traffic retries it.\n", strings.ToUpper(cfg.Protocol))
 	fmt.Println("\n🔌 Serving HTTP over data-plane. Press Ctrl+C to stop.")
-	return waitForDataPlaneServe(terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
+	return waitForDataPlaneServe(ctx, terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
 }
 
 // handleTCPServeIncoming is the default TCP mode: serve incoming streams from server, dial local backend.
@@ -228,7 +228,7 @@ func handleTCPServeIncoming(
 	fmt.Printf("\n🔌 Serving TCP over data-plane (expose-local). Backend: %s\n", cfg.TargetAddr)
 	fmt.Printf("💡 If the local %s backend is unavailable, the tunnel remains active; later incoming traffic retries it.\n", strings.ToUpper(cfg.Protocol))
 	fmt.Println("\n🔌 Press Ctrl+C to stop.")
-	return waitForDataPlaneServe(terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
+	return waitForDataPlaneServe(ctx, terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
 }
 
 // handleUDPProtocol runs expose-local (default) or advanced reverse UDP proxy mode.
@@ -281,7 +281,7 @@ func handleUDPExposeLocal(
 		strings.ToUpper(cfg.Protocol),
 	)
 	fmt.Println("\n🔌 Press Ctrl+C to stop.")
-	return waitForDataPlaneServe(terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
+	return waitForDataPlaneServe(ctx, terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
 }
 
 func handleUDPReverseMode(
@@ -302,6 +302,7 @@ func handleUDPReverseMode(
 }
 
 func waitForDataPlaneServe(
+	ctx context.Context,
 	terminal *ctrl.TerminalCoordinator,
 	errCh <-chan error,
 	serverURL, tunnelID string,
@@ -312,7 +313,7 @@ func waitForDataPlaneServe(
 		if err == nil {
 			return nil
 		}
-		ctrl.DeleteTunnelWithClient(serverURL, tunnelID, httpClient, bearer, csrf)
+		ctrl.DeleteTunnelWithClient(ctx, serverURL, tunnelID, httpClient, bearer, csrf)
 		return fmt.Errorf("❌ Data-plane serve stopped: %w", err)
 	})
 }
@@ -383,7 +384,7 @@ func runUDPStrategyContext(ctx context.Context, strategy dp.Strategy, serverURL,
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		ctrl.DeleteTunnelWithClient(serverURL, tunnelID, httpClient, bearer, csrf)
+		ctrl.DeleteTunnelWithClient(ctx, serverURL, tunnelID, httpClient, bearer, csrf)
 		return fmt.Errorf("%s: %w", strategy.ErrLabel, err)
 	}
 	return nil

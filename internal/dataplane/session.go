@@ -83,20 +83,33 @@ func createDataPlaneSessionWithFeatures(
 // Reconnectable session manager ensures there is a live smux session and
 // reconnects with exponential backoff on failures.
 type Manager struct {
-	serverURL        string
-	tunnelID         string
-	dpAuthToken      string
-	mu               sync.Mutex
-	conn             dataPlaneConn
-	sess             dataPlaneSession
-	pingDone         chan struct{}
-	pingTicker       stoppableTicker
-	lifecycleHandler LifecycleHandler
-	lifecycleControl io.Closer
-	stopped          bool
-	boInit           time.Duration
-	boMax            time.Duration
-	settings         config.RuntimeSettings
+	endpoint dataPlaneEndpoint
+	mu       sync.Mutex
+	conn     dataPlaneConn
+	sess     dataPlaneSession
+	pingDone chan struct{}
+
+	pingTicker stoppableTicker
+	lifecycle  managerLifecycle
+	stopped    bool
+	bounds     backoffBounds
+	settings   config.RuntimeSettings
+}
+
+// dataPlaneEndpoint identifies the tunnel data plane this manager dials.
+type dataPlaneEndpoint struct {
+	serverURL, tunnelID, authToken string
+}
+
+// managerLifecycle is the optional terminal-event stream of the live session.
+type managerLifecycle struct {
+	handler LifecycleHandler
+	control io.Closer
+}
+
+// backoffBounds are the initial and maximum redial delays.
+type backoffBounds struct {
+	init, max time.Duration
 }
 
 // SetLifecycleHandler enables the client-opened smux control stream used for
@@ -104,7 +117,7 @@ type Manager struct {
 func (m *Manager) SetLifecycleHandler(handler LifecycleHandler) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.lifecycleHandler = handler
+	m.lifecycle.handler = handler
 }
 
 // NewManager builds a reconnecting session manager. Unset backoff bounds fall
@@ -112,12 +125,9 @@ func (m *Manager) SetLifecycleHandler(handler LifecycleHandler) {
 func NewManager(serverURL, tunnelID, dpAuthToken string, boInit, boMax time.Duration, settings config.RuntimeSettings) *Manager {
 	boInit, boMax = normalizeReconnectBackoff(boInit, boMax)
 	return &Manager{
-		serverURL:   serverURL,
-		tunnelID:    tunnelID,
-		dpAuthToken: dpAuthToken,
-		boInit:      boInit,
-		boMax:       boMax,
-		settings:    settings,
+		endpoint: dataPlaneEndpoint{serverURL: serverURL, tunnelID: tunnelID, authToken: dpAuthToken},
+		bounds:   backoffBounds{init: boInit, max: boMax},
+		settings: settings,
 	}
 }
 
@@ -134,11 +144,11 @@ type dataPlaneSession interface {
 
 // EnsureSessionContext returns a live session while allowing terminal lifecycle
 // cancellation to abort an in-flight dial or reconnect backoff.
-func (m *Manager) EnsureSessionContext(ctx context.Context) (dataPlaneSession, error) {
+func (m *Manager) EnsureSessionContext(ctx context.Context) (dataPlaneSession, error) { //nolint:contextcheck // Background only replaces a nil ctx; a caller's ctx is always used
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	backoff := m.boInit
+	backoff := m.bounds.init
 	for attempt := 1; ; attempt++ {
 		m.mu.Lock()
 		if err := ctx.Err(); err != nil {
@@ -155,7 +165,7 @@ func (m *Manager) EnsureSessionContext(ctx context.Context) (dataPlaneSession, e
 			return sess, nil
 		}
 		wsURL, headers := m.sessionDialParams()
-		settings, handler := m.settings, m.lifecycleHandler
+		settings, handler := m.settings, m.lifecycle.handler
 		m.mu.Unlock()
 		if wsURL == "" {
 			return nil, errors.New("invalid websocket url")
@@ -190,7 +200,7 @@ func (m *Manager) EnsureSessionContext(ctx context.Context) (dataPlaneSession, e
 			previous := m.detachResourcesLocked()
 			m.conn, m.sess = resources.conn, resources.sess
 			m.pingDone, m.pingTicker = resources.pingDone, resources.pingTicker
-			m.lifecycleControl = resources.lifecycleControl
+			m.lifecycle.control = resources.lifecycleControl
 			m.mu.Unlock()
 			previous.close()
 			return resources.sess, nil
@@ -203,7 +213,7 @@ func (m *Manager) EnsureSessionContext(ctx context.Context) (dataPlaneSession, e
 		}
 		wait := backoff
 		log.Printf("data-plane dial failed (attempt %d, next retry in %s): %s", attempt, wait, redactDialError(err, resp))
-		backoff = nextBackoff(backoff, m.boMax)
+		backoff = nextBackoff(backoff, m.bounds.max)
 		if !sleepReconnectBackoffContext(ctx, m.isStopped, wait) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
@@ -251,7 +261,7 @@ func (m *Manager) isStopped() bool {
 }
 
 func (m *Manager) sessionDialParams() (string, http.Header) {
-	wsURL, origin, authToken, err := buildWebSocketURL(m.serverURL, m.tunnelID, m.dpAuthToken)
+	wsURL, origin, authToken, err := buildWebSocketURL(m.endpoint.serverURL, m.endpoint.tunnelID, m.endpoint.authToken)
 	if err != nil {
 		return "", http.Header{}
 	}
@@ -332,8 +342,8 @@ func redactDialError(err error, resp *http.Response) string {
 
 // detachResourcesLocked transfers sole teardown ownership out of manager state.
 func (m *Manager) detachResourcesLocked() *sessionResources {
-	r := &sessionResources{conn: m.conn, sess: m.sess, pingDone: m.pingDone, pingTicker: m.pingTicker, lifecycleControl: m.lifecycleControl}
-	m.conn, m.sess, m.pingDone, m.pingTicker, m.lifecycleControl = nil, nil, nil, nil, nil
+	r := &sessionResources{conn: m.conn, sess: m.sess, pingDone: m.pingDone, pingTicker: m.pingTicker, lifecycleControl: m.lifecycle.control}
+	m.conn, m.sess, m.pingDone, m.pingTicker, m.lifecycle.control = nil, nil, nil, nil, nil
 	return r
 }
 

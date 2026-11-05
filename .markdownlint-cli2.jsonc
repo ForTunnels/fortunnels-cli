@@ -1,0 +1,14 @@
+{
+  // The client is public, so its docs keep markdownlint's readability rules.
+  // Line length stays free: tables and command examples read better unwrapped.
+  "config": {
+    "default": true,
+    "MD013": false
+  },
+  "ignores": [
+    ".cache/**",
+    "bin/**",
+    "dist/**",
+    "graphify-out/**"
+  ]
+}

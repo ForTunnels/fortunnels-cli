@@ -193,7 +193,16 @@ func newTransportTLSFixture(t *testing.T) transportTLSFixture {
 
 func runQUICTransportTLSHandshake(t *testing.T, fixture transportTLSFixture, caPath, serverName string) error {
 	t.Helper()
-	listener, err := quic.ListenAddr("127.0.0.1:0", &tls.Config{
+	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer udpConn.Close()
+	// An explicit Transport closes its connections at once; ListenAddr's hidden
+	// one keeps goroutines alive until every handshake connection drains.
+	transport := &quic.Transport{Conn: udpConn}
+	defer transport.Close()
+	listener, err := transport.Listen(&tls.Config{
 		Certificates: []tls.Certificate{fixture.certificate},
 		MinVersion:   tls.VersionTLS12,
 		NextProtos:   []string{transportALPN},
@@ -202,7 +211,7 @@ func runQUICTransportTLSHandshake(t *testing.T, fixture transportTLSFixture, caP
 		t.Fatal(err)
 	}
 	defer listener.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	accepted := make(chan error, 1)
 	go func() {
@@ -239,7 +248,7 @@ func runDTLSTransportTLSHandshake(t *testing.T, fixture transportTLSFixture, caP
 	go func() {
 		conn, acceptErr := listener.Accept()
 		if acceptErr == nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			acceptErr = conn.(*dtls.Conn).HandshakeContext(ctx)
 			cancel()
 			_ = conn.Close()
@@ -263,7 +272,7 @@ func runDTLSTransportTLSHandshake(t *testing.T, fixture transportTLSFixture, caP
 	}
 	conn, err := dtls.DialWithOptions("udp", udpAddr, options...)
 	if err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 		err = conn.HandshakeContext(ctx)
 		cancel()
 	}

@@ -57,7 +57,7 @@ func TestManagerEnsureSession_LockFreeDuringDial(t *testing.T) {
 	server, requested, _, release := heldManagerUpgrade(t)
 	mgr := NewManager(server.URL, "t1", "auth", time.Millisecond, time.Second, managerTestSettings())
 	defer mgr.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { _, err := mgr.EnsureSessionContext(ctx); done <- err }()
@@ -86,7 +86,7 @@ func TestManagerEnsureSession_CloseDuringDialDiscardsSession(t *testing.T) {
 	mgr := NewManager(server.URL, "t1", "auth", time.Millisecond, time.Second, managerTestSettings())
 	defer mgr.Close()
 	done := make(chan error, 1)
-	go func() { _, err := mgr.EnsureSessionContext(context.Background()); done <- err }()
+	go func() { _, err := mgr.EnsureSessionContext(t.Context()); done <- err }()
 	select {
 	case <-requested:
 	case <-time.After(time.Second):
@@ -126,7 +126,7 @@ func TestManagerEnsureSession_DialFailureLogOmitsAuthToken(t *testing.T) {
 	defer log.SetOutput(previous)
 	mgr := NewManager(server.URL, "t1", "private-auth-token", time.Second, time.Second, managerTestSettings())
 	defer mgr.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
 	_, err := mgr.EnsureSessionContext(ctx)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -170,7 +170,7 @@ func TestManagerEnsureSession_StoppedAfterClose(t *testing.T) {
 	mgr := NewManager("http://example.com", "tunnel-123", "", time.Millisecond, 10*time.Millisecond, config.RuntimeSettings{})
 	mgr.Close()
 
-	_, err := mgr.EnsureSessionContext(context.Background())
+	_, err := mgr.EnsureSessionContext(t.Context())
 	require.Error(t, err)
 	require.Equal(t, "stopped", err.Error())
 }
@@ -178,21 +178,22 @@ func TestManagerEnsureSession_StoppedAfterClose(t *testing.T) {
 func TestManagerEnsureSession_ReleasesLockDuringBackoff(t *testing.T) {
 	mgr := NewManager("http://127.0.0.1:1", "tunnel-123", "", 2*time.Second, 2*time.Second, config.RuntimeSettings{})
 	go func() {
-		_, _ = mgr.EnsureSessionContext(context.Background())
+		_, _ = mgr.EnsureSessionContext(t.Context())
 	}()
 
 	time.Sleep(300 * time.Millisecond)
 
-	start := time.Now()
-	acquired := mgr.mu.TryLock()
-	elapsed := time.Since(start)
-	if acquired {
+	// Reconnect polls for stop every 50ms and each poll takes mgr.mu briefly, so a
+	// single probe can land on one of those holds under load. The lock must be
+	// free on some probe during the backoff; a lock held for the whole sleep never is.
+	require.Eventually(t, func() bool {
+		if !mgr.mu.TryLock() {
+			return false
+		}
 		mgr.mu.Unlock()
-	}
+		return true
+	}, time.Second, 10*time.Millisecond, "lock should be available while reconnect sleeps")
 	mgr.Close()
-
-	require.True(t, acquired, "lock should be available while reconnect sleeps")
-	require.Less(t, elapsed, 50*time.Millisecond)
 }
 
 func TestManagerResetSession_DiscardsFailedSessionBeforeReconnect(t *testing.T) {

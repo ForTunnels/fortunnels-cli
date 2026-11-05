@@ -1,0 +1,16 @@
+# The client is public, so its YAML keeps whitespace and punctuation rules
+# (colons, commas, hyphens, new lines, trailing spaces, final newline) on top
+# of the defect checks. Indentation and line length stay free.
+extends: default
+
+rules:
+  braces: disable
+  brackets: disable
+  comments: disable
+  comments-indentation: disable
+  document-start: disable
+  empty-lines: disable
+  indentation: disable
+  line-length: disable
+  quoted-strings: disable
+  truthy: disable

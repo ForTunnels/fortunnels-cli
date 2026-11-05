@@ -60,7 +60,7 @@ func startDTLSSessionHarness(t *testing.T, opts dtlsUDPSessionOptions) *dtlsSess
 	uc, err := net.ListenUDP(udpTransport, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	require.NoError(t, err)
 	h := &dtlsSessionHarness{peer: serverEnd, records: make(chan []byte, 64), local: uc.LocalAddr().String(), stopped: make(chan struct{})}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	go func() {
 		h.err = runDTLSUDPSession(ctx, clientEnd, uc, opts)
 		close(h.stopped)

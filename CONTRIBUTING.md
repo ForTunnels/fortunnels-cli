@@ -15,8 +15,11 @@ The repository owns the versions of Go quality tools. Bootstrap them with
 `./scripts/ci/ensure-quality-tools.sh`; it installs pinned binaries only under
 `.cache/quality-tools/bin`, and the Make targets run it automatically when
 needed. Do not use global `go install` copies or `@latest` for repository
-checks. GolangCI-Lint v1.64.8 remains the enforcing lint lane; v2.12.2 is only
-used by the separate migration-report command.
+checks. GolangCI-Lint v1.64.8 is the enforcing lint lane.
+
+The client is public, so its checks include readability: formatting and import
+grouping, line length, naming and comment style, spelling, and markdownlint and
+yamllint for docs and YAML. Run `make format` before `make check`.
 
 ## Pull Requests
 

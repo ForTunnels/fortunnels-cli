@@ -70,10 +70,6 @@ func NewLifecycleWatcher(out Output, onTerminal func(error)) *Watcher {
 	return w
 }
 
-// ConnectWebSocket connects a control-plane WebSocket and manages keepalive/watchers.
-// ConnectWebSocketWithAuth connects a control-plane WebSocket with optional bearer token
-// or session-cookie client for fallback tunnel polling. httpClient may be nil; when
-// provided with a cookie jar (session auth), fallback HTTP polls use it for auth.
 // RunLifecycleWatch feeds terminal control-plane events to the shared CLI
 // coordinator. It owns the WebSocket until the command is canceled or the
 // server sends a terminal event.
@@ -222,12 +218,6 @@ func (w *Watcher) watchLifecycleConnection(
 	}
 }
 
-// ConnectWebSocketWithAuth connects a control-plane WebSocket with optional bearer token
-// or session-cookie client for fallback tunnel polling. httpClient may be nil; when
-// provided with a cookie jar (session auth), fallback HTTP polls use it for auth.
-// startFallbackTunnelWatcherWithAuth runs a background goroutine that polls the server
-// for tunnel terminal state. httpClient may be nil; when provided with a cookie jar
-// (session auth), it is used for authenticated requests. bearer is used when non-empty.
 // StatusExpired is the wire value for expired tunnel status.
 const StatusExpired = protocolv1.StatusExpired
 
@@ -259,15 +249,13 @@ func ensurePollClient(httpClient *http.Client) *http.Client {
 	return httpClient
 }
 
-// RunFallbackLifecyclePoller polls the server and calls onTerminal when the tunnel
-// is deleted or expired. Use for HTTP/TCP/UDP modes that lack in-band lifecycle.
+// RunFallbackLifecyclePollerWithReasonContext polls the server and calls onTerminal
+// when the tunnel is deleted or expired. Use it for HTTP/TCP/UDP modes that lack
+// in-band lifecycle. Polling stops as soon as ctx is canceled, e.g. when another
+// signal wins.
 // httpClient may be nil; when provided with a cookie jar (session auth), it is used
-// for authenticated requests. bearer is used when non-empty.
-// RunFallbackLifecyclePollerWithReason is the authenticated canonical-indicator
-// fallback used by the CLI serving loops. The callback receives a non-nil
-// TrafficQuotaError only for combined monthly traffic exhaustion.
-// RunFallbackLifecyclePollerWithReasonContext is the cancellation-aware form
-// used by serving commands. Polling stops as soon as another signal wins.
+// for authenticated requests. bearer is used when non-empty. The callback receives
+// a non-nil TrafficQuotaError only for combined monthly traffic exhaustion.
 func RunFallbackLifecyclePollerWithReasonContext(
 	ctx context.Context,
 	httpClient *http.Client,
@@ -384,11 +372,7 @@ func trafficQuotaErrorFromPayload(payload protocolv1.TunnelListResponse, tunnelI
 	return nil
 }
 
-func tunnelStatusFromPayload(payload any) string {
-	response, ok := payload.(protocolv1.TunnelListResponse)
-	if !ok {
-		return ""
-	}
+func tunnelStatusFromPayload(response protocolv1.TunnelListResponse) string {
 	if response.Status != "" {
 		return response.Status
 	}

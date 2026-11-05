@@ -10,11 +10,11 @@ import (
 	"strings"
 )
 
-// computeDataPlaneAuth computes data-plane authentication token if requested.
-// Returns the computed token or empty string if no auth is configured.
-// ComputeDataPlaneAuthWithPSK is like ComputeDataPlaneAuth but falls back to psk when encrypt is true
-// and no explicit dp-auth secret/token was provided. This reuses stream encryption material for
-// local dev only; production should set --dp-auth-secret separately from --psk.
+// ComputeDataPlaneAuthWithPSK computes the data-plane authentication token if requested.
+// It returns the computed token, or an empty string if no auth is configured. It falls
+// back to psk when encrypt is true and no explicit dp-auth secret/token was provided.
+// This reuses stream encryption material for local dev only; production should set
+// --dp-auth-secret separately from --psk.
 func ComputeDataPlaneAuthWithPSK(tunnelID, dpAuthTokenFlag, dpAuthSecretFlag, psk string, encrypt bool) string {
 	if strings.TrimSpace(dpAuthTokenFlag) != "" {
 		return dpAuthTokenFlag

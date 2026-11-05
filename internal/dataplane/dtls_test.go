@@ -5,9 +5,7 @@ package dataplane
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
-	"errors"
 	"io"
 	"log"
 	"net"
@@ -79,10 +77,10 @@ func TestReadUDPDatagramRecord_RejectsOversizedPayload(t *testing.T) {
 }
 
 func TestStartDTLSDataPlaneUDPInvalidURL(t *testing.T) {
-	err := startDTLSDataPlaneUDPContext(context.Background(), "://invalid", "4444", "t1", "", "127.0.0.1:1", "127.0.0.1:0", "")
+	err := startDTLSDataPlaneUDPContext(t.Context(), "://invalid", "4444", "t1", "", "127.0.0.1:1", "127.0.0.1:0", "")
 	require.Error(t, err)
 	var permanent permanentError
-	require.True(t, errors.As(err, &permanent))
+	require.ErrorAs(t, err, &permanent)
 }
 
 func dtlsTestLocalSocket(t *testing.T) *net.UDPConn {

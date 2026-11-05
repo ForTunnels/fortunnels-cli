@@ -38,8 +38,8 @@ func TestNewIncomingDataPlaneManager_UsesConfiguredBackoff(t *testing.T) {
 			}
 			mgr := newIncomingDataPlaneManager(tunnel, config.RuntimeSettings{})
 			defer mgr.Close()
-			require.Equal(t, tt.wantInit, mgr.boInit)
-			require.Equal(t, tt.wantMax, mgr.boMax)
+			require.Equal(t, tt.wantInit, mgr.bounds.init)
+			require.Equal(t, tt.wantMax, mgr.bounds.max)
 		})
 	}
 }
@@ -110,7 +110,7 @@ func TestIncomingStreamLoop_BackoffGrowsAcrossRejectedSessions(t *testing.T) {
 		dispatch: func(io.ReadWriteCloser) { t.Fatal("a rejected session must not dispatch a stream") },
 	}
 
-	err := loop.run(context.Background())
+	err := loop.run(t.Context())
 
 	require.ErrorIs(t, err, context.Canceled)
 	ms := time.Millisecond
@@ -133,7 +133,7 @@ func TestIncomingStreamLoop_AcceptedStreamResetsBackoff(t *testing.T) {
 		dispatch: func(io.ReadWriteCloser) { dispatched++ },
 	}
 
-	err := loop.run(context.Background())
+	err := loop.run(t.Context())
 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 1, dispatched)
@@ -167,7 +167,7 @@ func TestStartDataPlaneServeIncoming_RejectedSessionsBackOff(t *testing.T) {
 		ServerURL: server.URL, TunnelID: "t1", AuthToken: "auth",
 		Backoff: config.ReconnectBackoff{Initial: 20 * time.Millisecond, Max: 320 * time.Millisecond},
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {

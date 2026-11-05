@@ -4,7 +4,6 @@
 package config
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -269,7 +268,7 @@ func TestValidateLoginRequiresPassword(t *testing.T) {
 			err := validateLoginPasswordPair(cfg)
 			if tt.wantErr {
 				require.Error(t, err)
-				require.True(t, strings.Contains(err.Error(), "password"),
+				require.Contains(t, err.Error(), "password",
 					"error should mention password, got: %s", err.Error())
 			} else {
 				require.NoError(t, err)

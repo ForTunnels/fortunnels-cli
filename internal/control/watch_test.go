@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/fortunnels/client/internal/config"
 	protocolv1 "github.com/fortunnels/client/shared/protocol/v1"
@@ -122,7 +123,7 @@ func TestCheckTunnelTerminal_NonOKJSONBodyIsNotTerminal(t *testing.T) {
 			defer server.Close()
 
 			terminal, status, code, terminalErr := checkTunnelTerminalDetailedContext(
-				context.Background(), server.Client(), server.URL, "t1", "",
+				t.Context(), server.Client(), server.URL, "t1", "",
 			)
 			assert.False(t, terminal)
 			assert.Empty(t, status)
@@ -134,7 +135,7 @@ func TestCheckTunnelTerminal_NonOKJSONBodyIsNotTerminal(t *testing.T) {
 
 func TestCheckTunnelTerminalWithStatus_CookieJarAuth(t *testing.T) {
 	jar, err := cookiejar.New(nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	client := &http.Client{Timeout: 2 * time.Second, Jar: jar}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -371,7 +372,7 @@ func TestHandleControlMessageSuppressesInitialActive(t *testing.T) {
 func TestTunnelStatusFromPayload(t *testing.T) {
 	tests := []struct {
 		name     string
-		payload  any
+		payload  protocolv1.TunnelListResponse
 		expected string
 	}{
 		{
@@ -480,7 +481,7 @@ func TestRunLifecycleWatch_ReconnectsAfterServerClose(t *testing.T) {
 		_, _, _ = conn.ReadMessage()
 	}))
 	defer server.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
 	defer cancel()
 	terminal := make(chan error, 1)
 	done := make(chan struct{})
@@ -490,7 +491,7 @@ func TestRunLifecycleWatch_ReconnectsAfterServerClose(t *testing.T) {
 	}()
 	select {
 	case err := <-terminal:
-		assert.EqualError(t, err, MsgTunnelRemovedExiting)
+		require.EqualError(t, err, MsgTunnelRemovedExiting)
 	case <-ctx.Done():
 		t.Fatal("terminal event did not arrive after reconnect")
 	}
@@ -530,7 +531,7 @@ func TestRunLifecycleWatch_StopsOnContextCancel(t *testing.T) {
 			}))
 			defer server.Close()
 			defer unblock()
-			ctx, cancel := context.WithCancel(context.Background())
+			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			var terminal atomic.Bool
 			done := make(chan struct{})

@@ -25,8 +25,9 @@ DEFAULT_SERVER_URL ?= https://fortunnels.ru
 
 all: build
 
+# Callers that already ran the bootstrap (apps/Makefile, check) pass QUALITY_TOOLS_READY=1 to skip a second run.
 quality-tools:
-	@$(ENSURE_QUALITY_TOOLS)
+	@[ -n "$(QUALITY_TOOLS_READY)" ] || $(ENSURE_QUALITY_TOOLS)
 
 install-tools: quality-tools
 	@echo "==> Pinned repository-local quality tools are ready"
@@ -36,8 +37,8 @@ tidy:
 	go mod tidy
 
 test:
-	@echo "==> go test -race ./..."
-	go test -race ./...
+	@echo "==> go test -race -shuffle=on ./..."
+	go test -race -shuffle=on ./...
 
 build: check
 	@echo "==> go build (client)"
@@ -53,52 +54,50 @@ build-fast:
 clean:
 	rm -rf $(BIN_DIR) $(ARTIFACTS_DIR)
 
+# Formatters walk only the module's own sources, never local caches or build output.
+GO_SOURCES = $(shell find . \( -path ./.cache -o -path ./bin -o -path ./dist -o -path ./graphify-out \) -prune -o -name '*.go' -print)
+
 format: quality-tools
 	@echo "==> gofumpt + goimports (rewrite)"
-	@GOWORK=off $(QUALITY_TOOLS_BIN)/gofumpt -w .
-	@GOWORK=off $(QUALITY_TOOLS_BIN)/goimports -w .
+	@GOWORK=off $(QUALITY_TOOLS_BIN)/gofumpt -w $(GO_SOURCES)
+	@GOWORK=off $(QUALITY_TOOLS_BIN)/goimports -local github.com/fortunnels -w $(GO_SOURCES)
 
 format-check: quality-tools
 	@set -euo pipefail; \
 	echo "==> Checking formatting (read-only)"; \
-	unformatted=$$(GOWORK=off $(QUALITY_TOOLS_BIN)/gofumpt -l .); \
+	unformatted=$$(GOWORK=off $(QUALITY_TOOLS_BIN)/gofumpt -l $(GO_SOURCES)); \
 	if [ -n "$$unformatted" ]; then \
 		echo "ERROR: Unformatted Go files (run 'make format'):"; \
 		echo "$$unformatted"; \
 		exit 1; \
 	fi; \
-	unimported=$$(GOWORK=off $(QUALITY_TOOLS_BIN)/goimports -l .); \
+	unimported=$$(GOWORK=off $(QUALITY_TOOLS_BIN)/goimports -local github.com/fortunnels -l $(GO_SOURCES)); \
 	if [ -n "$$unimported" ]; then \
 		echo "ERROR: Go files with import issues (run 'make format'):"; \
 		echo "$$unimported"; \
 		exit 1; \
 	fi
 
-lint: quality-tools
+# The client is public, so lint also keeps its sources gofumpt/goimports clean for readers.
+lint: quality-tools format-check
 	@GOWORK=off $(QUALITY_TOOLS_BIN)/golangci-lint run --config .golangci.yml ./...
+	@GOWORK=off $(QUALITY_TOOLS_BIN)/golangci-lint run --config .golangci-structure.yml --allow-parallel-runners ./...
 
 security: quality-tools
 	@GOWORK=off $(QUALITY_TOOLS_BIN)/govulncheck ./...
 
-check: quality-tools format-check
+# golangci-lint (the lint target) also runs staticcheck, gosimple, stylecheck, misspell and gocyclo.
+check: quality-tools
 	@set -euo pipefail; \
 	echo "==> Running strict code checks (will fail build on any error)"; \
 	echo "Running go vet..."; \
 	go vet ./...; \
 	echo "Running tests..."; \
 	go test -v ./...; \
-	echo "Running golangci-lint..."; \
-	$(QUALITY_TOOLS_BIN)/golangci-lint run --config .golangci.yml; \
+	echo "Running format check and golangci-lint..."; \
+	$(MAKE) --no-print-directory lint QUALITY_TOOLS_READY=1; \
 	echo "Running security check..."; \
 	$(QUALITY_TOOLS_BIN)/govulncheck ./...; \
-	echo "Running staticcheck..."; \
-	$(QUALITY_TOOLS_BIN)/staticcheck ./...; \
-	echo "Checking for ineffectual assignments..."; \
-	$(QUALITY_TOOLS_BIN)/ineffassign ./...; \
-	echo "Checking for misspellings..."; \
-	$(QUALITY_TOOLS_BIN)/misspell -error .; \
-	echo "Checking cyclomatic complexity..."; \
-	$(QUALITY_TOOLS_BIN)/gocyclo -over 15 .; \
 	echo "All checks passed"
 
 release: tidy

@@ -19,7 +19,7 @@ func (o *commandQuotaOutput) Printf(format string, args ...any) { _, _ = o.Buffe
 func (o *commandQuotaOutput) Println(args ...any)               { _, _ = o.Buffer.WriteString("reported\n") }
 
 func TestTrafficQuota_CommandExitsNonzeroWithoutDuplicateMessage(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	out := &commandQuotaOutput{}
 	coordinator := ctrl.NewTerminalCoordinator(out, cancel)
 	coordinator.Signal(&ctrl.TrafficQuotaError{})
@@ -37,7 +37,7 @@ func TestTrafficQuota_CommandExitsNonzeroWithoutDuplicateMessage(t *testing.T) {
 }
 
 func TestTrafficQuota_OrdinaryRemovalPreservesSuccessfulExit(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	coordinator := ctrl.NewTerminalCoordinator(&commandQuotaOutput{}, cancel)
 	coordinator.Signal(nil)
 

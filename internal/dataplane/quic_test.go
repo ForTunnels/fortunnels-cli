@@ -45,7 +45,7 @@ func TestForwardUDPPacketsOverQUIC_DropsOversizedDatagramAndContinues(t *testing
 	peer, err := net.DialUDP("udp", nil, uc.LocalAddr().(*net.UDPAddr))
 	require.NoError(t, err)
 	defer peer.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	var logs bytes.Buffer
 	previousOutput := log.Writer()
@@ -129,7 +129,7 @@ func (c *controlledDatagramConn) ReceiveDatagram(ctx context.Context) ([]byte, e
 func TestForwardUDPPacketsOverQUIC_RejectedSourcesDoNotAccumulate(t *testing.T) {
 	uc, err := listenTestUDP()
 	require.NoError(t, err)
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	defer uc.Close()
 	conn := &controlledDatagramConn{ctx: ctx, sent: make(chan pendingQUICDatagram), replies: make(chan []byte, 1)}
@@ -219,7 +219,7 @@ func TestForwardUDPPacketsOverQUIC_FatalSendDiscardsNewSource(t *testing.T) {
 	peer, err := net.DialUDP("udp", nil, uc.LocalAddr().(*net.UDPAddr))
 	require.NoError(t, err)
 	defer peer.Close()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	conn := &controlledDatagramConn{ctx: ctx, sent: make(chan pendingQUICDatagram)}
 	flows := newFlowRegistry()
@@ -252,7 +252,7 @@ func TestForwardUDPPacketsOverQUIC_ContextCancel(t *testing.T) {
 	require.NoError(t, err)
 	defer uc.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	done := make(chan error, 1)
 	go func() {
 		done <- forwardUDPPacketsOverQUIC(ctx, cancel, nil, uc, "t1", "auth", "127.0.0.1:53", newFlowRegistry(), nil)

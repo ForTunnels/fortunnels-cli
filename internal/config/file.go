@@ -19,7 +19,7 @@ const (
 	fileConfigName        = "fortunnels.yml"
 	envConfigPath         = "FORTUNNELS_CONFIG"
 	errMsgConfigVersion   = "config version must be 3"
-	errMsgConfigAuthtoken = "agent.authtoken is required" //nolint:gosec // user-facing validation message, not a secret
+	errMsgConfigAuthtoken = "agent.authtoken is required" // user-facing validation message, not a secret
 	goosWindows           = "windows"
 )
 
