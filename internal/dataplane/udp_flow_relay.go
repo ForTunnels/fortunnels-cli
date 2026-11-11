@@ -4,6 +4,7 @@
 package dataplane
 
 import (
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -28,6 +29,7 @@ func newUDPFlowRegistry() *flowRegistry {
 // only the source its flow ID maps to. Each direction reports its terminal
 // error on errCh.
 func startUDPFlowStreamRelays(stream io.ReadWriter, uc *net.UDPConn, errCh chan<- error, flows *flowRegistry) {
+	replies := flowReplies{local: uc, flows: flows}
 	go func() {
 		buf := make([]byte, udpMaxPacketSize)
 		for {
@@ -54,7 +56,7 @@ func startUDPFlowStreamRelays(stream io.ReadWriter, uc *net.UDPConn, errCh chan<
 		for {
 			flowID, payload, err := readUDPFlowFrame(stream, udpDatagramMaxSize)
 			if err == nil {
-				err = deliverUDPFlowDatagram(uc, flows, flowID, payload, &drops)
+				err = replies.deliver(flowID, payload, &drops)
 			}
 			if err != nil {
 				errCh <- err
@@ -64,10 +66,16 @@ func startUDPFlowStreamRelays(stream io.ReadWriter, uc *net.UDPConn, errCh chan<
 	}()
 }
 
-// deliverUDPFlowDatagram writes a reply to the local source of flowID. A reply
-// for an unknown or expired flow is dropped: it has no source to go to.
-func deliverUDPFlowDatagram(uc *net.UDPConn, flows *flowRegistry, flowID uint32, payload []byte, drops *uint64) error {
-	peer, ok := flows.udpFlowPeer(flowID)
+// flowReplies routes server replies to the local source their flow ID maps to.
+type flowReplies struct {
+	local udpReplyWriter
+	flows *flowRegistry
+}
+
+// deliver writes a reply to the local source of flowID. A reply for an unknown
+// or expired flow is dropped: it has no source to go to.
+func (r flowReplies) deliver(flowID uint32, payload []byte, drops *uint64) error {
+	peer, ok := r.flows.udpFlowPeer(flowID)
 	if !ok {
 		*drops++
 		if *drops == 1 || *drops%100 == 0 {
@@ -75,6 +83,24 @@ func deliverUDPFlowDatagram(uc *net.UDPConn, flows *flowRegistry, flowID uint32,
 		}
 		return nil
 	}
-	_, err := uc.WriteToUDP(payload, peer)
-	return err
+	return writeLocalReply(r.local, payload, peer, drops)
+}
+
+// writeLocalReply sends a reply to a local UDP source. UDP is lossy by design:
+// a write that fails for one source (full send buffer, vanished host) drops
+// that datagram instead of ending every other flow of the session. Only a
+// closed socket is fatal.
+func writeLocalReply(w udpReplyWriter, payload []byte, peer *net.UDPAddr, drops *uint64) error {
+	_, err := w.WriteToUDP(payload, peer)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	*drops++
+	if *drops == 1 || *drops%100 == 0 {
+		log.Printf("udp: dropped reply to %s: %v (drops=%d)", peer, err, *drops)
+	}
+	return nil
 }

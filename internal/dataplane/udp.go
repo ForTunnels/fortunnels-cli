@@ -25,7 +25,7 @@ var errInvalidUDPFrame = errors.New("invalid UDP frame")
 // StartDataPlaneServeIncomingUDP accepts smux streams opened by server UDP ingress and bridges to a local UDP backend.
 func StartDataPlaneServeIncomingUDPContext(
 	ctx context.Context,
-	tunnel IncomingTunnel,
+	tunnel *IncomingTunnel,
 	runtime config.RuntimeSettings,
 	reporter BackendStateReporter,
 	onLifecycle func(protocolv1.LifecycleEventPayload),
@@ -33,10 +33,11 @@ func StartDataPlaneServeIncomingUDPContext(
 	return startIncomingDataPlaneContext(ctx, tunnel, runtime, reporter, onLifecycle, serveIncomingUDPStream, "incoming udp stream error")
 }
 
-func serveIncomingUDPStream(stream io.ReadWriteCloser, reporter BackendStateReporter) error {
+func serveIncomingUDPStream(stream io.ReadWriteCloser, policy incomingPolicy) error {
 	defer stream.Close()
+	reporter := policy.reporter
 	rd := bufio.NewReader(stream)
-	proto, dst, err := readStreamPreface(rd)
+	proto, dst, err := readPrefaceBounded(stream, rd, policy.prefaceWait())
 	if err != nil {
 		return err
 	}
@@ -45,6 +46,13 @@ func serveIncomingUDPStream(stream io.ReadWriteCloser, reporter BackendStateRepo
 	}
 	if dst == "" {
 		return fmt.Errorf("stream preface missing or empty dst")
+	}
+	if !destinationAllowed(policy.target, dst) {
+		return fmt.Errorf("%w: %q", errDestinationNotAllowed, dst)
+	}
+	payloadStream, err := wrapClientStream(splitConn{Reader: rd, Writer: stream, Closer: stream}, policy.tunnelID, policy.enc)
+	if err != nil {
+		return err
 	}
 	raddr, err := net.ResolveUDPAddr("udp", dst)
 	if err != nil {
@@ -61,7 +69,7 @@ func serveIncomingUDPStream(stream io.ReadWriteCloser, reporter BackendStateRepo
 	if reporter != nil {
 		reporter(dst, nil)
 	}
-	return bridgeUDPStreamAndBackend(stream, uc, dst, reporter)
+	return bridgeUDPStreamAndBackend(payloadStream, uc, dst, reporter)
 }
 
 func bridgeUDPStreamAndBackend(stream io.ReadWriteCloser, uc *net.UDPConn, dst string, reporter BackendStateReporter) error {
@@ -254,13 +262,13 @@ func startStreamToUDPLocal(
 
 func startPacketsToUDPLocal(
 	readPacket packetReader,
-	uc *net.UDPConn,
+	uc udpReplyWriter,
 	errCh chan<- error,
 	lastSrcMu *sync.RWMutex,
 	lastSrc **net.UDPAddr,
 ) {
 	go func() {
-		var drops uint64
+		var drops, writeDrops uint64
 		for {
 			packet, err := readPacket()
 			if errors.Is(err, errInvalidDTLSRecord) || errors.Is(err, errDTLSRecordPayloadTooLarge) {
@@ -277,7 +285,7 @@ func startPacketsToUDPLocal(
 			if dst == nil {
 				continue
 			}
-			if _, writeErr := uc.WriteToUDP(packet, dst); writeErr != nil {
+			if writeErr := writeLocalReply(uc, packet, dst, &writeDrops); writeErr != nil {
 				errCh <- writeErr
 				return
 			}

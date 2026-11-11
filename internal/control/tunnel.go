@@ -10,10 +10,12 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -23,6 +25,14 @@ import (
 )
 
 type Response = protocolv1.Tunnel
+
+// CreatedTunnel is the response to creating a tunnel: the tunnel plus the
+// data-plane credential the server issues only in that response, never on list
+// or detail requests.
+type CreatedTunnel struct {
+	Response
+	DPAuth string `json:"dp_auth,omitempty"`
+}
 
 const maxTunnelErrorBodyBytes = 64 << 10
 
@@ -52,7 +62,7 @@ func CreateTunnelWithClient(
 	serverURL, localAddr, protocol, userID string,
 	client *http.Client,
 	bearer, csrf string,
-) (*Response, error) {
+) (*CreatedTunnel, error) {
 	requestBody := protocolv1.TunnelCreateRequest{
 		TargetAddr: localAddr,
 		Protocol:   protocol,
@@ -61,7 +71,7 @@ func CreateTunnelWithClient(
 	if strings.EqualFold(protocol, "https") {
 		// Auto-configure localhost HTTPS targets for local dev (self-signed cert, SNI).
 		if h, _, err := net.SplitHostPort(localAddr); err == nil {
-			if h == "localhost" || h == "127.0.0.1" {
+			if isLoopbackTargetHost(h) {
 				insecure := true
 				requestBody.TLSInsecureSkipVerify = &insecure
 				requestBody.TLSServerName = "localhost"
@@ -110,7 +120,7 @@ func CreateTunnelWithClient(
 		return nil, decodeTunnelCreateError(resp.StatusCode, bodyBytes)
 	}
 
-	var tunnel Response
+	var tunnel CreatedTunnel
 	if err := json.NewDecoder(resp.Body).Decode(&tunnel); err != nil {
 		return nil, err
 	}
@@ -249,10 +259,57 @@ func PrintTunnelInfoWithOutput(out Output, serverURL string, tunnel *Response) {
 	out.Printf("📊 Status: %s\n", tunnel.Status)
 	if tunnel.IsGuest {
 		out.Printf(
-			"ℹ️ Гостевой туннель: срок жизни до %s, лимит трафика 1 GB.\n",
+			"ℹ️ Гостевой туннель: срок жизни до %s%s.\n",
 			tunnel.ExpiresAt.Local().Format("2006-01-02 15:04:05"),
+			guestTrafficLimitSuffix(tunnel.TrafficLimitBytes),
 		)
+		if signupURL := guestSignupHint(serverURL); signupURL != "" {
+			out.Printf("💡 Бесплатный аккаунт: дашборд, инспектор запросов, TCP/UDP-туннели и CLI-токен — %s\n", signupURL)
+		}
 	}
+}
+
+// guestSignupHint builds the registration URL from the tunnel server's origin.
+// It returns an empty string when the server URL lacks a usable HTTP(S) origin.
+func guestSignupHint(serverURL string) string {
+	server, err := url.Parse(serverURL)
+	if err != nil || server.Host == "" || (server.Scheme != "http" && server.Scheme != "https") {
+		return ""
+	}
+	signup := url.URL{Scheme: server.Scheme, Host: server.Host, Path: "/", RawQuery: "register=1"}
+	return signup.String()
+}
+
+// isLoopbackTargetHost reports whether host is localhost or a loopback address.
+func isLoopbackTargetHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// guestTrafficLimitSuffix renders the server-reported traffic cap; an unknown
+// cap is omitted rather than guessed.
+func guestTrafficLimitSuffix(limitBytes int64) string {
+	if limitBytes <= 0 {
+		return ""
+	}
+	return ", лимит трафика " + formatByteSize(limitBytes)
+}
+
+func formatByteSize(n int64) string {
+	const kb, mb, gb = 1 << 10, 1 << 20, 1 << 30
+	value, unit := float64(n), "B"
+	switch {
+	case n >= gb:
+		value, unit = float64(n)/gb, "GB"
+	case n >= mb:
+		value, unit = float64(n)/mb, "MB"
+	case n >= kb:
+		value, unit = float64(n)/kb, "KB"
+	}
+	return strconv.FormatFloat(math.Round(value*10)/10, 'f', -1, 64) + " " + unit
 }
 
 // WarnGuestTunnelWithLogin prints a stderr hint when login was provided but the tunnel is guest.

@@ -36,7 +36,7 @@ func TestNewIncomingDataPlaneManager_UsesConfiguredBackoff(t *testing.T) {
 				ServerURL: "http://example.com", TunnelID: "t1", AuthToken: "auth",
 				Backoff: config.ReconnectBackoff{Initial: tt.initial, Max: tt.maximum},
 			}
-			mgr := newIncomingDataPlaneManager(tunnel, config.RuntimeSettings{})
+			mgr := newIncomingDataPlaneManager(&tunnel, config.RuntimeSettings{})
 			defer mgr.Close()
 			require.Equal(t, tt.wantInit, mgr.bounds.init)
 			require.Equal(t, tt.wantMax, mgr.bounds.max)
@@ -171,7 +171,7 @@ func TestStartDataPlaneServeIncoming_RejectedSessionsBackOff(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		done <- StartDataPlaneServeIncomingContext(ctx, tunnel, managerTestSettings(), nil, nil)
+		done <- StartDataPlaneServeIncomingContext(ctx, &tunnel, managerTestSettings(), nil, nil)
 	}()
 
 	select {

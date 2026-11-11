@@ -115,7 +115,7 @@ func TestServeIncomingStream_InvalidPreface(t *testing.T) {
 	stream := &mockTCPReadWriteCloser{
 		readData: []byte("invalid\n"),
 	}
-	err := serveIncomingStream(stream, nil)
+	err := serveIncomingStream(stream, incomingPolicy{})
 	require.Error(t, err, "serveIncomingStream() with invalid preface should return error")
 	if !stream.closed {
 		t.Error("serveIncomingStream() should close stream on error")
@@ -127,7 +127,7 @@ func TestServeIncomingStream_EmptyDestination(t *testing.T) {
 	stream := &mockTCPReadWriteCloser{
 		readData: []byte(preface),
 	}
-	err := serveIncomingStream(stream, nil)
+	err := serveIncomingStream(stream, incomingPolicy{})
 	require.Error(t, err, "serveIncomingStream() with empty dst should return explicit error")
 	require.Contains(t, err.Error(), "dst", "error message should mention dst")
 }
@@ -137,7 +137,7 @@ func TestServeIncomingStream_DialError(t *testing.T) {
 	stream := &mockTCPReadWriteCloser{
 		readData: []byte(preface),
 	}
-	err := serveIncomingStream(stream, nil)
+	err := serveIncomingStream(stream, incomingPolicy{})
 	require.Error(t, err, "serveIncomingStream() with dial error should return error")
 }
 
@@ -155,7 +155,7 @@ func TestServeIncomingStream_DialFailureWritesSetupError(t *testing.T) {
 	stream := &mockTCPReadWriteCloser{
 		readData: []byte(preface),
 	}
-	err = serveIncomingStream(stream, nil)
+	err = serveIncomingStream(stream, incomingPolicy{})
 	require.Error(t, err, "serveIncomingStream() with dial error should return error")
 	require.True(t, stream.closed, "stream should be closed on error")
 	// Client must write setup error payload before close so server can classify the failure
@@ -176,7 +176,7 @@ func TestServeIncomingStream_BackendDialTimeoutWritesSetupError(t *testing.T) {
 	}
 	stream := &mockTCPReadWriteCloser{readData: []byte(`{"dst":"127.0.0.1:8080","proto":"tcp"}` + "\n")}
 	var reported error
-	err := serveIncomingStream(stream, func(_ string, err error) { reported = err })
+	err := serveIncomingStream(stream, incomingPolicy{reporter: func(_ string, err error) { reported = err }})
 	var netErr net.Error
 	require.ErrorAs(t, err, &netErr)
 	require.True(t, netErr.Timeout())
@@ -204,7 +204,7 @@ func TestServeIncomingStream_SuccessWritesSetupAck(t *testing.T) {
 		readData: streamData,
 	}
 
-	_ = serveIncomingStream(stream, nil)
+	_ = serveIncomingStream(stream, incomingPolicy{})
 	// Client must write setup ack before bridging so server knows connection succeeded
 	written := string(stream.writeData)
 	require.Contains(t, written, `"ok":true`, "should write setup ack with ok:true before bridge")
@@ -289,7 +289,7 @@ func TestServeIncomingStream_HTTP10WithoutContentLength_Completes(t *testing.T) 
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- serveIncomingStream(clientSide, nil)
+		errCh <- serveIncomingStream(clientSide, incomingPolicy{})
 	}()
 
 	preface := `{"dst": "` + serverAddr + `", "proto": "tcp"}` + "\n"

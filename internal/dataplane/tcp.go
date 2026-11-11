@@ -100,16 +100,20 @@ type IncomingTunnel struct {
 	TunnelID  string
 	AuthToken string // data-plane auth token
 	Backoff   config.ReconnectBackoff
+	// Target is the configured local backend; streams may only name its host.
+	Target string
+	// Encryption is the PSK layer applied to the payload of incoming streams.
+	Encryption config.EncryptionSettings
 }
 
 func StartDataPlaneServeIncoming(serverURL, tunnelID string, runtime config.RuntimeSettings, reporter BackendStateReporter, dpAuthToken string) error {
 	tunnel := IncomingTunnel{ServerURL: serverURL, TunnelID: tunnelID, AuthToken: dpAuthToken}
-	return StartDataPlaneServeIncomingContext(context.Background(), tunnel, runtime, reporter, nil)
+	return StartDataPlaneServeIncomingContext(context.Background(), &tunnel, runtime, reporter, nil)
 }
 
 func StartDataPlaneServeIncomingContext(
 	ctx context.Context,
-	tunnel IncomingTunnel,
+	tunnel *IncomingTunnel,
 	runtime config.RuntimeSettings,
 	reporter BackendStateReporter,
 	onLifecycle func(protocolv1.LifecycleEventPayload),
@@ -117,11 +121,11 @@ func StartDataPlaneServeIncomingContext(
 	return startIncomingDataPlaneContext(ctx, tunnel, runtime, reporter, onLifecycle, serveIncomingStream, "incoming stream error")
 }
 
-type incomingStreamHandler func(io.ReadWriteCloser, BackendStateReporter) error
+type incomingStreamHandler func(io.ReadWriteCloser, incomingPolicy) error
 
 func startIncomingDataPlaneContext(
 	ctx context.Context,
-	tunnel IncomingTunnel,
+	tunnel *IncomingTunnel,
 	runtime config.RuntimeSettings,
 	reporter BackendStateReporter,
 	onLifecycle func(protocolv1.LifecycleEventPayload),
@@ -140,13 +144,14 @@ func startIncomingDataPlaneContext(
 		}
 	}()
 	defer close(stopCloser)
+	policy := incomingPolicy{reporter: reporter, tunnelID: tunnel.TunnelID, target: tunnel.Target, enc: tunnel.Encryption}
 	loop := incomingStreamLoop{
 		sessions: mgr,
 		retry:    newReconnectBackoff(mgr.bounds.init, mgr.bounds.max),
 		wait:     waitRetryDelay,
 		dispatch: func(s io.ReadWriteCloser) {
 			go func() {
-				if err := handleStream(s, reporter); err != nil && !support.IsBenignCopyError(err) {
+				if err := handleStream(s, policy); err != nil && !support.IsBenignCopyError(err) {
 					log.Printf("%s: %v", errorLabel, err)
 				}
 			}()
@@ -202,7 +207,7 @@ func (l incomingStreamLoop) run(ctx context.Context) error {
 
 // newIncomingDataPlaneManager builds the session manager for the expose-local
 // HTTP, TCP and UDP modes from the configured --backoff-initial/--backoff-max.
-func newIncomingDataPlaneManager(tunnel IncomingTunnel, runtime config.RuntimeSettings) *Manager {
+func newIncomingDataPlaneManager(tunnel *IncomingTunnel, runtime config.RuntimeSettings) *Manager {
 	return NewManager(tunnel.ServerURL, tunnel.TunnelID, tunnel.AuthToken, tunnel.Backoff.Initial, tunnel.Backoff.Max, runtime)
 }
 
@@ -218,37 +223,54 @@ func writeSetupError(stream io.Writer, err error) {
 	}
 }
 
-func serveIncomingStream(stream io.ReadWriteCloser, reporter BackendStateReporter) error {
+func serveIncomingStream(stream io.ReadWriteCloser, policy incomingPolicy) error {
 	defer stream.Close()
 	rd := bufio.NewReader(stream)
-	dst, err := readStreamDestination(rd)
+	_, dst, err := readPrefaceBounded(stream, rd, policy.prefaceWait())
 	if err != nil {
 		return err
 	}
 	if dst == "" {
 		return fmt.Errorf("stream preface missing or empty dst")
 	}
+	if !destinationAllowed(policy.target, dst) {
+		writeSetupError(stream, errDestinationNotAllowed)
+		return fmt.Errorf("%w: %q", errDestinationNotAllowed, dst)
+	}
 	bc, err := dialBackend("tcp", dst)
 	if err != nil {
-		if reporter != nil {
-			reporter(dst, err)
+		if policy.reporter != nil {
+			policy.reporter(dst, err)
 		}
 		writeSetupError(stream, err)
 		return err
 	}
 	defer bc.Close()
 
-	if reporter != nil {
-		reporter(dst, nil)
+	if policy.reporter != nil {
+		policy.reporter(dst, nil)
 	}
 	if _, err := stream.Write([]byte(setupAckLine)); err != nil {
 		return err
 	}
+	return bridgeIncoming(stream, rd, bc, policy)
+}
 
-	if err := flushBufferedBytes(rd, bc); err != nil {
+// bridgeIncoming relays the payload after the setup ack. With --encrypt the
+// payload is PSK-wrapped like the server's side of the stream; the preface and
+// the ack stay plaintext.
+func bridgeIncoming(stream io.ReadWriteCloser, rd *bufio.Reader, backend net.Conn, policy incomingPolicy) error {
+	if policy.enc.Enabled {
+		secured, err := policy.secureStream(stream, rd)
+		if err != nil {
+			return err
+		}
+		return bridgeStreamAndBackend(secured, secured, backend)
+	}
+	if err := flushBufferedBytes(rd, backend); err != nil {
 		return err
 	}
-	return bridgeStreamAndBackend(stream, rd, bc)
+	return bridgeStreamAndBackend(stream, rd, backend)
 }
 
 func bridgeStreamAndBackend(stream io.ReadWriteCloser, streamReader io.Reader, backendConn net.Conn) error {
@@ -396,7 +418,7 @@ func readStreamDestination(rd *bufio.Reader) (string, error) {
 
 func readStreamPreface(rd *bufio.Reader) (proto, dst string, err error) {
 	for {
-		line, readErr := rd.ReadString('\n')
+		line, readErr := readBoundedLine(rd)
 		if readErr != nil {
 			return "", "", readErr
 		}

@@ -4,6 +4,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -41,11 +42,31 @@ func Validate(cfg *Config) error {
 	if err := ValidateUDPExposeLocalOptions(cfg); err != nil {
 		return err
 	}
+	if err := validateEncryptDataPlane(cfg); err != nil {
+		return err
+	}
 	if err := validateKeepaliveIntervals(cfg); err != nil {
 		return err
 	}
 	warnOnSensitiveFlagUsage(cfg)
 	return nil
+}
+
+var errEncryptDataPlane = errors.New("--encrypt is not supported on this data-plane transport")
+
+// validateEncryptDataPlane rejects --encrypt where no PSK layer exists: the
+// QUIC and DTLS reverse UDP planes carry datagrams outside smux streams, so
+// accepting the flag would leave users believing traffic has an extra layer.
+func validateEncryptDataPlane(cfg *Config) error {
+	if !cfg.Encrypt || !IsUDPReverseMode(cfg) {
+		return nil
+	}
+	switch plane := strings.ToLower(strings.TrimSpace(cfg.DataPlane)); plane {
+	case "quic", "dtls":
+		return fmt.Errorf("%w (-dp %s is already encrypted); use -dp ws or drop --encrypt", errEncryptDataPlane, plane)
+	default:
+		return nil
+	}
 }
 
 func validateKeepaliveIntervals(cfg *Config) error {

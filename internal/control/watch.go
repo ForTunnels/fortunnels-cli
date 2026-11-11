@@ -40,23 +40,6 @@ type Watcher struct {
 	onTerminal func(error)
 }
 
-// TrafficQuotaError is terminal for the current CLI invocation. A new
-// invocation may proceed after the allowance resets or the plan changes.
-type TrafficQuotaError struct {
-	ResetAt time.Time
-}
-
-func (e *TrafficQuotaError) Error() string { return MonthlyTrafficLimitMessage(e.ResetAt) }
-
-func MonthlyTrafficLimitMessage(resetAt time.Time) string {
-	if resetAt.IsZero() {
-		return "Monthly traffic limit reached (incoming + outgoing). Change your plan. Reconnecting or creating another tunnel will not reset this account's allowance."
-	}
-	return "Monthly traffic limit reached (incoming + outgoing). Wait until " +
-		resetAt.UTC().Format(time.RFC3339) +
-		" or change your plan. Reconnecting or creating another tunnel will not reset this account's allowance."
-}
-
 func NewWatcher(out Output) *Watcher {
 	if out == nil {
 		out = StdOutput{}
@@ -266,18 +249,37 @@ func RunFallbackLifecyclePollerWithReasonContext(
 	client := ensurePollClient(httpClient)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	authRejections := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			terminal, _, _, terminalErr := checkTunnelTerminalDetailedContext(ctx, client, serverURL, tunnelID, bearer)
-			if terminal {
-				onTerminal(terminalErr)
-				return
+			terminal, _, statusCode, terminalErr := checkTunnelTerminalDetailedContext(ctx, client, serverURL, tunnelID, bearer)
+			if !terminal {
+				authRejections = 0
+				continue
 			}
+			if isAuthRejection(statusCode) {
+				// A proxy or WAF can answer one poll with 401/403 while the
+				// tunnel is fine; only a repeated rejection means removal.
+				authRejections++
+				if authRejections < authFailureConfirmations {
+					continue
+				}
+			}
+			onTerminal(terminalErr)
+			return
 		}
 	}
+}
+
+// authFailureConfirmations is how many consecutive polls must answer 401/403
+// before the tunnel counts as removed or access revoked.
+const authFailureConfirmations = 3
+
+func isAuthRejection(statusCode int) bool {
+	return statusCode == http.StatusUnauthorized || statusCode == http.StatusForbidden
 }
 
 func checkTunnelTerminalDetailedContext(parent context.Context, client *http.Client, serverURL, tunnelID, bearer string) (terminal bool, status string, statusCode int, terminalErr error) {
@@ -301,8 +303,8 @@ func checkTunnelTerminalDetailedContext(parent context.Context, client *http.Cli
 	defer resp.Body.Close()
 
 	// 401/403 from GET /api/tunnels?id=<id> means tunnel removed or access revoked for this session/token.
-	// Treat as terminal immediately; no failure counters or WARN spam.
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+	// One answer is reported as terminal here; the poll loop requires authFailureConfirmations in a row.
+	if isAuthRejection(resp.StatusCode) {
 		logDebug("%d from GET /api/tunnels → terminal (tunnel removed or access revoked)", resp.StatusCode)
 		return true, "", resp.StatusCode, nil
 	}

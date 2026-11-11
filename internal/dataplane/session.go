@@ -51,6 +51,9 @@ func createDataPlaneSessionWithFeatures(
 		defer resp.Body.Close()
 	}
 	if err != nil {
+		if rejected := dialRejectionError(resp, authToken); rejected != nil {
+			return nil, dataPlaneFeatures{}, nil, rejected
+		}
 		return nil, dataPlaneFeatures{}, nil, fmt.Errorf("ws dial: %w", err)
 	}
 	features := dataPlaneFeaturesFromResponse(resp)
@@ -211,8 +214,12 @@ func (m *Manager) EnsureSessionContext(ctx context.Context) (dataPlaneSession, e
 		if m.isStopped() {
 			return nil, errors.New("stopped")
 		}
+		if rejected := dialRejectionError(resp, m.endpoint.authToken); rejected != nil {
+			return nil, rejected
+		}
 		wait := backoff
-		log.Printf("data-plane dial failed (attempt %d, next retry in %s): %s", attempt, wait, redactDialError(err, resp))
+		log.Printf("data-plane dial failed (attempt %d, next retry in %s): %s%s",
+			attempt, wait, redactDialError(err, resp), dialRejectionHint(resp))
 		backoff = nextBackoff(backoff, m.bounds.max)
 		if !sleepReconnectBackoffContext(ctx, m.isStopped, wait) {
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -318,6 +325,37 @@ func initializeSession(conn *websocket.Conn, settings config.RuntimeSettings, ha
 	resources.pingTicker = pingTicker
 	StartPingLoop(resources.pingDone, conn, pingTicker, settings.PingTimeout)
 	return resources, nil
+}
+
+var errDataPlaneCredentialRequired = errors.New("data-plane credential required")
+
+// credentialRejected reports whether the server refused the upgrade for lack of
+// an acceptable data-plane credential.
+func credentialRejected(resp *http.Response) bool {
+	return resp != nil && (resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden)
+}
+
+// dialRejectionError is permanent when the server refused a dial that carried
+// no credential at all: nothing about a retry would change the answer. A dial
+// that sent a credential stays retryable, because key rotation or a paused
+// tunnel can make the same credential valid again.
+func dialRejectionError(resp *http.Response, authToken string) error {
+	if !credentialRejected(resp) || strings.TrimSpace(authToken) != "" {
+		return nil
+	}
+	return permanentError{fmt.Errorf(
+		"%w: the server rejected the connection (%s) and no credential was available; "+
+			"use a server that issues dp_auth at tunnel creation, or set --dp-auth-secret or --dp-auth-token",
+		errDataPlaneCredentialRequired, resp.Status,
+	)}
+}
+
+// dialRejectionHint tells the user why a retried dial keeps failing.
+func dialRejectionHint(resp *http.Response) string {
+	if !credentialRejected(resp) {
+		return ""
+	}
+	return "; the server rejected the data-plane credential, check --dp-auth-token or --dp-auth-secret"
 }
 
 var dialErrorURL = regexp.MustCompile(`(?:https?|wss?)://[^\s"'<>]+`)

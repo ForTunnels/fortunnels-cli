@@ -124,7 +124,7 @@ func runClientWorkflow(cfg *config.Config) error {
 		return fmt.Errorf("❌ Authentication failed: %w", err)
 	}
 
-	tun, err := ctrl.CreateTunnelWithClient(
+	created, err := ctrl.CreateTunnelWithClient(
 		cfg.ServerURL,
 		cfg.TargetAddr,
 		cfg.Protocol,
@@ -140,6 +140,7 @@ func runClientWorkflow(cfg *config.Config) error {
 		return clierrors.HandleTunnelCreationError(err, cfg.ServerURL, cfg.Protocol, cfg.TargetAddr)
 	}
 
+	tun := &created.Response
 	if err := auth.CheckBearerNotRejectedAsGuest(bearer, cfg.TokenFromConfigFile, auth.TunnelGuestSignals{
 		IsGuest: tun.IsGuest,
 		UserID:  tun.UserID,
@@ -151,12 +152,19 @@ func runClientWorkflow(cfg *config.Config) error {
 
 	runtime := cfg.RuntimeSettings()
 	enc := cfg.EncryptionSettings()
-	authToken := auth.ComputeDataPlaneAuthWithPSK(tun.ID, cfg.DPAuthToken, cfg.DPAuthSecret, cfg.PSK, enc.Enabled)
+	authToken := auth.ResolveDataPlaneAuth(&auth.DataPlaneAuthInputs{
+		TunnelID: tun.ID, Issued: created.DPAuth, TokenFlag: cfg.DPAuthToken, SecretFlag: cfg.DPAuthSecret,
+		PSK: cfg.PSK, Encrypt: enc.Enabled,
+	})
 
 	ctrl.PrintTunnelInfo(cfg.ServerURL, tun)
 	loginUsed := strings.TrimSpace(cfg.Login) != "" && strings.TrimSpace(cfg.Password) != ""
 	ctrl.WarnGuestTunnelWithLogin(loginUsed, tun)
-	serveCtx, cancelServe := context.WithCancel(context.Background())
+	// Interrupts are intercepted only once the tunnel exists, so Ctrl+C during
+	// login or creation still stops the CLI at once.
+	interruptCtx, stopInterrupts := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopInterrupts()
+	serveCtx, cancelServe := context.WithCancel(interruptCtx)
 	defer cancelServe()
 	terminal := ctrl.NewTerminalCoordinator(nil, cancelServe)
 	go ctrl.RunFallbackLifecyclePollerWithReasonContext(serveCtx, httpClient, cfg.ServerURL, tun.ID, bearer, terminal.Signal, runtime.WatchInterval)
@@ -178,8 +186,11 @@ func runClientWorkflow(cfg *config.Config) error {
 
 // incomingTunnel describes the created tunnel for the expose-local serve loops,
 // including the configured --backoff-initial/--backoff-max.
-func incomingTunnel(cfg *config.Config, tun *ctrl.Response, dpAuthToken string) dp.IncomingTunnel {
-	return dp.IncomingTunnel{ServerURL: cfg.ServerURL, TunnelID: tun.ID, AuthToken: dpAuthToken, Backoff: cfg.ReconnectBackoff()}
+func incomingTunnel(cfg *config.Config, tun *ctrl.Response, dpAuthToken string) *dp.IncomingTunnel {
+	return &dp.IncomingTunnel{
+		ServerURL: cfg.ServerURL, TunnelID: tun.ID, AuthToken: dpAuthToken, Backoff: cfg.ReconnectBackoff(),
+		Target: cfg.TargetAddr, Encryption: cfg.EncryptionSettings(),
+	}
 }
 
 // handleHTTPProtocol delegates to tunnel package and TCP data-plane
@@ -298,7 +309,9 @@ func handleUDPReverseMode(
 	go func() {
 		errCh <- runUDPStrategyContext(ctx, strategy, serverURL, tunnelID, httpClient, bearer, csrf)
 	}()
-	return waitForProtocol(terminal, errCh, nil)
+	return waitForProtocol(ctx, terminal, errCh, serveExit{onInterrupt: func() {
+		ctrl.DeleteTunnelWithClient(ctx, serverURL, tunnelID, httpClient, bearer, csrf)
+	}})
 }
 
 func waitForDataPlaneServe(
@@ -309,33 +322,58 @@ func waitForDataPlaneServe(
 	httpClient *http.Client,
 	bearer, csrf string,
 ) error {
-	return waitForProtocol(terminal, errCh, func(err error) error {
-		if err == nil {
-			return nil
-		}
-		ctrl.DeleteTunnelWithClient(ctx, serverURL, tunnelID, httpClient, bearer, csrf)
-		return fmt.Errorf("❌ Data-plane serve stopped: %w", err)
+	deleteTunnel := func() { ctrl.DeleteTunnelWithClient(ctx, serverURL, tunnelID, httpClient, bearer, csrf) }
+	return waitForProtocol(ctx, terminal, errCh, serveExit{
+		onError: func(err error) error {
+			if err == nil {
+				return nil
+			}
+			deleteTunnel()
+			return fmt.Errorf("❌ Data-plane serve stopped: %w", err)
+		},
+		onInterrupt: deleteTunnel,
 	})
 }
 
-func waitForProtocol(terminal *ctrl.TerminalCoordinator, errCh <-chan error, handleError func(error) error) error {
-	sigc := make(chan os.Signal, 1)
-	signal.Notify(sigc, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(sigc)
+// serveExit are the ways a serve loop ends besides a terminal lifecycle event.
+type serveExit struct {
+	onError     func(error) error // maps a serve-loop failure to the CLI result
+	onInterrupt func()            // runs when the user interrupts, e.g. to delete the tunnel
+}
+
+// waitForProtocol blocks until the serve loop fails, the server ends the
+// tunnel, or ctx is canceled by a user interrupt. A user interrupt runs
+// exit.onInterrupt so a tunnel the CLI created is not left behind on the
+// server; a server-initiated end does not, since the tunnel is already gone.
+func waitForProtocol(ctx context.Context, terminal *ctrl.TerminalCoordinator, errCh <-chan error, exit serveExit) error {
 	select {
-	case <-sigc:
-		return nil
+	case <-ctx.Done():
+		return finishInterrupted(terminal, exit)
 	case <-terminal.Done():
 		return terminal.ExitError()
 	case err := <-errCh:
-		if terminalErr := terminal.Err(); terminalErr != nil {
+		if terminal.Err() != nil {
 			return terminal.ExitError()
 		}
-		if handleError != nil {
-			return handleError(err)
+		if ctx.Err() != nil {
+			// The serve loop stopped because the user interrupted it.
+			return finishInterrupted(terminal, exit)
+		}
+		if exit.onError != nil {
+			return exit.onError(err)
 		}
 		return err
 	}
+}
+
+func finishInterrupted(terminal *ctrl.TerminalCoordinator, exit serveExit) error {
+	if terminal.Err() != nil {
+		return terminal.ExitError()
+	}
+	if exit.onInterrupt != nil {
+		exit.onInterrupt()
+	}
+	return nil
 }
 
 func lifecycleSignal(terminal *ctrl.TerminalCoordinator) func(protocolv1.LifecycleEventPayload) {

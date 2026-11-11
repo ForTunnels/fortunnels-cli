@@ -23,12 +23,18 @@ const (
 	goosWindows           = "windows"
 )
 
-// FileConfig is the on-disk fortunnels.yml schema (version 3).
+// FileConfig is the on-disk fortunnels.yml schema (version 3). Keys this client
+// does not model are kept in Extra so that rewriting the token preserves them.
 type FileConfig struct {
-	Version int `yaml:"version"`
-	Agent   struct {
-		Authtoken string `yaml:"authtoken"`
-	} `yaml:"agent"`
+	Version int                  `yaml:"version"`
+	Agent   AgentConfig          `yaml:"agent"`
+	Extra   map[string]yaml.Node `yaml:",inline"`
+}
+
+// AgentConfig is the agent section of fortunnels.yml.
+type AgentConfig struct {
+	Authtoken string               `yaml:"authtoken"`
+	Extra     map[string]yaml.Node `yaml:",inline"`
 }
 
 // DefaultConfigPath returns the platform default config file path.
@@ -91,7 +97,8 @@ func SaveAuthtoken(path, token string) error {
 	if err := secureConfigDir(filepath.Dir(path)); err != nil {
 		return err
 	}
-	fc := &FileConfig{Version: fileConfigVersion}
+	fc := existingFileConfig(path)
+	fc.Version = fileConfigVersion
 	fc.Agent.Authtoken = token
 	out, err := yaml.Marshal(fc)
 	if err != nil {
@@ -106,6 +113,16 @@ func SaveAuthtoken(path, token string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 	return nil
+}
+
+// existingFileConfig loads the current file so a token update keeps the rest of
+// it. A missing or unparsable file yields an empty config.
+func existingFileConfig(path string) *FileConfig {
+	fc, err := LoadFileConfig(path)
+	if err != nil {
+		return &FileConfig{}
+	}
+	return fc
 }
 
 // secureConfigDir creates a missing config directory owner-only. An existing

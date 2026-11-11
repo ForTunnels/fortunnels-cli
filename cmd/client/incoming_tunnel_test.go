@@ -14,12 +14,21 @@ import (
 	dp "github.com/fortunnels/client/internal/dataplane"
 )
 
+func TestIncomingTunnelCarriesTargetAndEncryption(t *testing.T) {
+	cfg := &config.Config{ServerURL: "https://example.test", TargetAddr: "localhost:3000", Encrypt: true, PSK: "k"}
+
+	got := incomingTunnel(cfg, &ctrl.Response{ID: "t1"}, "")
+
+	require.Equal(t, "localhost:3000", got.Target)
+	require.Equal(t, config.EncryptionSettings{Enabled: true, PSK: "k"}, got.Encryption)
+}
+
 func TestIncomingTunnelCarriesConfiguredBackoff(t *testing.T) {
 	cfg := &config.Config{ServerURL: "https://example.test", BackoffInitial: 3 * time.Second, BackoffMax: 45 * time.Second}
 
 	got := incomingTunnel(cfg, &ctrl.Response{ID: "t1"}, "dp-token")
 
-	require.Equal(t, dp.IncomingTunnel{
+	require.Equal(t, &dp.IncomingTunnel{
 		ServerURL: "https://example.test",
 		TunnelID:  "t1",
 		AuthToken: "dp-token",

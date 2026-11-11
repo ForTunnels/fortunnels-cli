@@ -41,8 +41,8 @@ func main() {
 	runtime := config.RuntimeSettings{
 		PingInterval:          200 * time.Millisecond,
 		PingTimeout:           2 * time.Second,
-		SmuxKeepAliveInterval: 500 * time.Millisecond,
-		SmuxKeepAliveTimeout:  2 * time.Second,
+		SmuxKeepAliveInterval: 10 * time.Second,
+		SmuxKeepAliveTimeout:  60 * time.Second,
 		WatchInterval:         200 * time.Millisecond,
 	}
 	fmt.Printf("ATTACHING tunnel=%s local=%s\n", *tunnelID, *localAddr)

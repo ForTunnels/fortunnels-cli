@@ -455,7 +455,7 @@ func TestServeIncomingUDPStream_RoundTrip(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- serveIncomingUDPStream(serverConn, nil)
+		errCh <- serveIncomingUDPStream(serverConn, incomingPolicy{})
 	}()
 
 	preface := []byte(`{"dst":"` + echoAddr + `","proto":"udp"}` + "\n")
@@ -479,7 +479,7 @@ func TestServeIncomingUDPStream_NonUDPPreface(t *testing.T) {
 		_, _ = clientConn.Write([]byte(`{"dst":"127.0.0.1:1","proto":"tcp"}` + "\n"))
 		_ = clientConn.Close()
 	}()
-	err := serveIncomingUDPStream(serverConn, nil)
+	err := serveIncomingUDPStream(serverConn, incomingPolicy{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "expected udp preface")
 }

@@ -27,7 +27,7 @@ func TestTrafficQuota_CommandExitsNonzeroWithoutDuplicateMessage(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	errCh <- context.Canceled
-	err := waitForProtocol(coordinator, errCh, nil)
+	err := waitForProtocol(t.Context(), coordinator, errCh, serveExit{})
 	require.Error(t, err, "a reported terminal error makes main exit nonzero")
 	var stderr bytes.Buffer
 	writeWorkflowError(&stderr, err)
@@ -43,6 +43,6 @@ func TestTrafficQuota_OrdinaryRemovalPreservesSuccessfulExit(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	errCh <- context.Canceled
-	require.NoError(t, waitForProtocol(coordinator, errCh, nil))
+	require.NoError(t, waitForProtocol(t.Context(), coordinator, errCh, serveExit{}))
 	require.ErrorIs(t, ctx.Err(), context.Canceled)
 }

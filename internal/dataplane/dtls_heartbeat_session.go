@@ -232,7 +232,7 @@ func (s *dtlsUDPSession) handleServerRecord(ctx context.Context, record []byte, 
 			logDTLSPayloadDrop(drops, len(record), maxDTLSFlowPayload)
 			return nil //nolint:nilerr // a malformed record is counted and dropped; the session stays up
 		}
-		return deliverUDPFlowDatagram(s.local, s.flows, flowID, payload, drops)
+		return flowReplies{local: s.local, flows: s.flows}.deliver(flowID, payload, drops)
 	}
 	payload, err := parseUDPDatagramRecord(record)
 	if err != nil {
@@ -245,8 +245,7 @@ func (s *dtlsUDPSession) handleServerRecord(ctx context.Context, record []byte, 
 	if dst == nil {
 		return nil
 	}
-	_, err = s.local.WriteToUDP(payload, dst)
-	return err
+	return writeLocalReply(s.local, payload, dst, drops)
 }
 
 // acknowledge switches the session to flow framing for good; the first ack

@@ -29,6 +29,30 @@ func ComputeDataPlaneAuthWithPSK(tunnelID, dpAuthTokenFlag, dpAuthSecretFlag, ps
 	return computeHMAC(sec, tunnelID)
 }
 
+// DataPlaneAuthInputs are the credential sources for one tunnel's data-plane
+// connection.
+type DataPlaneAuthInputs struct {
+	TunnelID   string
+	Issued     string // dp_auth from the tunnel-create response
+	TokenFlag  string // --dp-auth-token
+	SecretFlag string // --dp-auth-secret
+	PSK        string
+	Encrypt    bool
+}
+
+// ResolveDataPlaneAuth picks the data-plane credential: an explicit token or
+// secret flag wins, then the credential the server issued for this tunnel, then
+// the PSK fallback of ComputeDataPlaneAuthWithPSK.
+func ResolveDataPlaneAuth(in *DataPlaneAuthInputs) string {
+	if explicit := ComputeDataPlaneAuthWithPSK(in.TunnelID, in.TokenFlag, in.SecretFlag, "", false); explicit != "" {
+		return explicit
+	}
+	if issued := strings.TrimSpace(in.Issued); issued != "" {
+		return issued
+	}
+	return ComputeDataPlaneAuthWithPSK(in.TunnelID, "", "", in.PSK, in.Encrypt)
+}
+
 // computeHMAC returns hex-encoded HMAC-SHA256(secret, message)
 func computeHMAC(secret, message string) string {
 	h := hmac.New(sha256.New, []byte(secret))
