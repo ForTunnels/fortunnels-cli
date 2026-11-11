@@ -1,425 +1,82 @@
-# ForTunnels Client
+# ForTunnels CLI
 
-[![Go Version](https://img.shields.io/badge/go-1.25.7-blue.svg)](https://golang.org)
-[![License](https://img.shields.io/badge/license-Proprietary-red.svg)](LICENSE)
+ForTunnels is an ngrok alternative that works in Russia: give localhost a public address for demos, webhook testing, and HTTP/HTTPS, TCP, or UDP services.
 
-Standalone CLI client for creating secure tunnels through [ForTunnels](https://fortunnels.ru). Expose local HTTP/HTTPS, TCP, and UDP services to the internet in seconds.
+[Русская версия](README.ru.md) · [Website](https://fortunnels.ru/) · [Documentation](https://fortunnels.ru/docs)
 
-## Overview
+## 1. Install
 
-ForTunnels Client is a command-line tool that connects to the ForTunnels server at `https://fortunnels.ru` and creates a public URL for your local service.
+You don't need Go to use the CLI.
 
-### Features
+**macOS and Linux with Homebrew:**
 
-- **HTTP/HTTPS tunnels** - forward web services with automatic routing
-- **TCP tunnels** - forward any TCP protocol (SSH, databases, etc.)
-- **UDP tunnels** - support for UDP protocols (DNS, syslog, etc.)
-- **Multiple transports** - WebSocket/smux, QUIC, DTLS
-- **Encryption** - optional client-side stream encryption (PSK)
-- **Monitoring** - tunnel status via WebSocket
-- **Cross-platform** - Linux, macOS, Windows
-
-## Requirements
-
-- Go 1.25.7 or newer (toolchain `go1.26.5`; see `go.mod`)
-- `make` (optional, for convenience targets)
-
-## Installation
-
-### Build from source
-
-```bash
-git clone https://github.com/fortunnels/client.git
-cd client
-go build -o ./bin/client ./cmd/client
-# On Windows: go build -o ./bin/client.msi ./cmd/client
+```sh
+brew install fortunnels/fortunnels/fortunnels
 ```
 
-The released CLI product name is **fortunnels** (see `make release` artifacts). A local `make build` writes `./bin/client` (or `./bin/client.msi` on Windows).
-
-Or via `make`:
-
-```bash
-make build          # binary in ./bin/client (includes checks)
-make build-fast     # without tests/coverage
-make format         # rewrite sources (gofumpt + goimports)
-```
-
-On Windows (or when cross-compiling with `GOOS=windows`), the binary is produced as `bin/client.msi` instead of `bin/client`.
-
-The `BIN_DIR` environment variable controls the output directory:
-
-```bash
-make build BIN_DIR=../bin
-```
-
-### Download binaries
-
-Binaries for common platforms are available on the [ForTunnels downloads page](https://fortunnels.ru/#downloads).
-
-On **Windows**, you can install from the [Chocolatey Community Repository](https://community.chocolatey.org/) when the package is available:
+**Windows with Chocolatey** (run PowerShell as Administrator):
 
 ```powershell
 choco install fortunnels
 ```
 
-On **macOS** and **Linux**, a Homebrew tap is published separately; see the main ForTunnels site.
+Without a package manager, [download a binary](https://fortunnels.ru/#downloads) for your OS and architecture. Extract it and put `fortunnels` (or `fortunnels.exe` on Windows) on your `PATH`. You can check the archive against [SHA256SUMS.txt](https://fortunnels.ru/landing-assets/downloads/SHA256SUMS.txt).
 
-## Quick start
+## 2. Open your first tunnel
 
-### HTTP tunnel
+Start your web app on port 8000, then run:
 
-Create a tunnel to a local web server on port 8000:
-
-```bash
-./bin/client 8000
+```sh
+fortunnels 8000
 ```
 
-For numeric HTTP, HTTPS, and TCP shortcuts, the client uses `localhost:8000`.
-That lets it reach a service that listens only on IPv6 (`::1`) as well as one
-that listens on IPv4. An explicit `host:port` value is preserved exactly.
+Open the public HTTPS URL printed by the CLI. It forwards requests to `localhost:8000`. Keep the CLI running while you use the tunnel and press Ctrl+C to stop it. You can try an HTTP tunnel as a guest when guest access is enabled.
 
-After the tunnel is created you will receive a public URL like `https://fortunnels.ru/t/{tunnel-id}/`.
-Host-based routing is also available, for example: `https://{subdomain}.fortunnels.ru`
-(where `{subdomain}` is a random identifier, not the tunnel ID).
+## 3. Register and connect your account
 
-### HTTPS tunnel
+[Create a free account](https://fortunnels.ru/?register=1) to manage your tunnels from the dashboard. The Free plan includes CLI tokens.
 
-```bash
-./bin/client -local 127.0.0.1:8443 -protocol https
+1. Open [Dashboard → Settings](https://fortunnels.ru/dashboard/settings) and create a CLI token. The full token is shown once.
+2. Copy the command from the dashboard or replace `YOUR_CLI_TOKEN` below with your token:
+
+   ```sh
+   fortunnels config add-authtoken YOUR_CLI_TOKEN
+   ```
+
+3. Run `fortunnels 8000` again. The CLI uses the saved token automatically, and the new tunnel appears in your dashboard.
+
+Keep the token private. For automation, pass it through `FORTUNNELS_TOKEN` or `-token-file` instead of putting it in the command.
+
+## CLI reference
+
+| Task | Command |
+| --- | --- |
+| Share a local web app or API | `fortunnels 8000` |
+| Receive webhooks in a local app | `fortunnels http 3000` |
+| Forward to a local HTTPS service | `fortunnels https 8443` |
+| Expose a local TCP service | `fortunnels tcp 22` |
+| Expose a local UDP service | `fortunnels udp 9000` |
+| Check the local token configuration | `fortunnels config check` |
+| List all flags | `fortunnels --help` |
+
+Sign in with a CLI token before opening TCP or UDP tunnels. Use the printed host and port to connect. Port shortcuts use `localhost` for HTTP, HTTPS, and TCP, and `127.0.0.1` for UDP. To select an exact address, use `-local host:port`, for example `fortunnels -local '[::1]:8000'`.
+
+- `-watch` monitors tunnel status; `-watch-interval 5s` adjusts polling.
+- `-token-file` and `-token-stdin` supply a token for one run. An explicit token takes precedence over the saved token.
+- `-udp-listen` and `-udp-dst` together select reverse UDP mode. For transport options, see the [CLI documentation](https://fortunnels.ru/docs/cli).
+
+If the public URL returns **502**, first check that `http://localhost:8000` works locally. If authentication fails, check the local config with `fortunnels config check`. That command doesn't contact the server; replace the token in Dashboard → Settings if it expired or was revoked.
+
+## Build from source
+
+From a clone of this repository, run the following with the Go toolchain specified in [go.mod](go.mod):
+
+```sh
+go build -o fortunnels ./cmd/client
 ```
 
-### TCP tunnel (expose-local, default)
-
-Expose a local TCP service (e.g. PostgreSQL, SSH) to a public endpoint:
-
-```bash
-./bin/client tcp 5433 -login user@example.test -pass-stdin
-```
-
-The numeric TCP form also uses `localhost:5433`.
-
-Or with explicit flags:
-
-```bash
-./bin/client -protocol tcp -local 127.0.0.1:5433
-```
-
-The server allocates a public TCP port. Connect to the displayed `tcp://host:port` URL from anywhere.
-
-### UDP tunnel (expose-local)
-
-Expose a local UDP service (e.g. DNS, game server):
-
-```bash
-./bin/client udp 9000 -login user@example.test -pass-stdin
-```
-
-The numeric UDP form remains IPv4-specific and uses `127.0.0.1:9000`. Supply
-an explicit `host:port` address when UDP must use a particular address family.
-
-### Advanced UDP (reverse mode)
-
-```bash
-./bin/client -protocol udp -udp-listen :5353 -udp-dst 127.0.0.1:53
-```
-
-## CLI options reference
-
-### General options
-
-- `-local` - local service address to forward (e.g. `127.0.0.1:8000`)
-- `-protocol http|https|tcp|udp` - tunnel protocol
-- `-user` - user identifier (for audit/quotas, default: `default`)
-- `-dp ws|quic|dtls` - data-plane transport (default: `ws`)
-- `-transport-ca` - optional PEM CA bundle added to platform roots for QUIC/DTLS; hostname and chain verification stay enabled
-
-### Execution mode
-
-**Default:** all tunnels run in blocking mode and stay active until Ctrl+C.
-
-### TCP mode
-
-- **Default (expose-local)**: Server accepts external TCP, forwards to your local backend.
-- `-backoff-initial` - reconnect backoff (sec, default: 1)
-- `-backoff-max` - max reconnect backoff (sec, default: 30)
-
-### UDP mode
-
-**Default (expose-local):** `fortunnels udp <port>` forwards public UDP to your local service.
-
-**Advanced reverse mode** (both flags required):
-
-- `-udp-listen :PORT` - local UDP listen address (e.g. `:5353`)
-- `-udp-dst host:port` - server-side UDP destination (e.g. `127.0.0.1:53`)
-
-### Reliability and monitoring
-
-- `-ping-interval` - WebSocket ping interval (default: `30s`)
-- `-ping-timeout` - ping write timeout (default: `10s`)
-- `-smux-keepalive-interval` - smux keepalive interval (default: `25s`)
-- `-smux-keepalive-timeout` - smux keepalive timeout (default: `60s`)
-- `-watch` - tunnel monitoring mode (subscription/polling)
-- `-watch-interval` - HTTP poll interval after WS subscription (default: `10s`)
-
-### Encryption
-
-- `-encrypt` - enable client-side stream encryption (PSK) over data-plane
-- `-psk` - pre-shared key (required with `-encrypt`)
-- `-psk-file` - read PSK from a file
-- `-psk-stdin` - read PSK from stdin
-
-**Note:** When using `-encrypt`, you must provide a non-empty `-psk`.
-
-### Lifecycle and auth
-
-- When using `-login`/`-pass` (session auth), the fallback lifecycle poller uses the same authenticated client (cookie jar) for tunnel status checks. Bearer token auth is also supported.
-- `-watch` mode uses the same auth for both WebSocket subscription and HTTP fallback polling.
-
-### Authentication notes
-
-TCP and UDP require a registered account; a Free account is valid within its limits. Anonymous creation remains available only for HTTP/HTTPS when the server enables it.
-
-- `-login` - login for server authentication
-- `-pass` - password for server authentication
-- `-pass-file` - read password from a file
-- `-pass-stdin` - read password from stdin
-- `-token` - Bearer JWT token for API authorization
-- `-token-file` - read token from a file
-- `-token-stdin` - read token from stdin
-- `-dp-auth-token` - ready data-plane auth token (hex)
-- `-dp-auth-token-file` - read data-plane token from a file
-- `-dp-auth-token-stdin` - read data-plane token from stdin
-- `-dp-auth-secret` - secret for computing token (HMAC-SHA256 over `tunnel_id`)
-- `-dp-auth-secret-file` - read data-plane secret from a file
-- `-dp-auth-secret-stdin` - read data-plane secret from stdin
-
-When stdin is a terminal, `-pass-stdin` prompts for the password, hides typed
-characters, and accepts Enter to submit. Piped or redirected input is read until
-EOF, so `printf '%s\n' "$PASSWORD" | ./bin/client tcp 5433 -login "$LOGIN" -pass-stdin`
-also works. Surrounding whitespace is trimmed in both cases.
-
-### Positional arguments
-
-Short forms are supported:
-
-- `client 8000` - HTTP tunnel to `localhost:8000`
-- `client http 8000` - HTTP tunnel to `localhost:8000`
-- `client tcp 22` - TCP tunnel to `localhost:22`
-- `client udp 53` - UDP tunnel to `127.0.0.1:53`
-
-Explicit addresses are never rewritten. For example, `client -protocol http
--local 127.0.0.1:8000` stays IPv4-specific, while `client -protocol http
--local '[::1]:8000'` stays IPv6-specific.
-
-## Security
-
-### TLS/HTTPS
-
-- All connections to the server use HTTPS (TLS 1.2+)
-- Server certificate validation is enabled by default
-
-### Stream encryption
-
-The client supports optional encryption over the data-plane:
-
-- XChaCha20-Poly1305 (AEAD)
-- Key derived from PSK and tunnel ID: `SHA256(PSK || tunnel_id)`
-- Enable: `-encrypt -psk "your-secret-key"`
-
-**Recommendations:**
-
-- Use long random keys (at least 32 bytes)
-- Do not reuse a PSK across tunnels
-- Store PSK in environment variables, files, or secret managers
-
-### Authentication
-
-- Authentication via login/password or JWT token
-- Tokens are passed via `Authorization: Bearer <token>`
-- Data-plane supports additional HMAC-based authentication
-- Prefer `*-file` or `*-stdin` for sensitive data
-
-## Usage examples
-
-### Webhooks
-
-Test cloud webhooks against a local server:
-
-```bash
-./bin/client -local 127.0.0.1:3000 -protocol http
-```
-
-Use the public URL to configure the webhook.
-
-### SSH access
-
-```bash
-./bin/client tcp 22 -login user@example.test -pass-stdin
-```
-
-### UDP (DNS)
-
-```bash
-./bin/client udp 53 -login user@example.test -pass-stdin
-```
-
-Advanced reverse mode:
-
-```bash
-./bin/client -protocol udp -udp-listen :5353 -udp-dst 127.0.0.1:53
-```
-
-### With monitoring
-
-```bash
-./bin/client 8000 -watch -watch-interval 5s
-```
-
-### With encryption
-
-```bash
-./bin/client 8000 -encrypt -psk "$(openssl rand -hex 32)"
-```
-
-### QUIC transport
-
-```bash
-./bin/client tcp 22 -login user@example.test -pass-stdin -dp quic
-```
-
-### DTLS transport (UDP)
-
-```bash
-./bin/client -protocol udp -login user@example.test -pass-stdin -dp dtls -udp-listen :5353 -udp-dst 127.0.0.1:53
-```
-
-## Troubleshooting
-
-### Unable to connect to the server
-
-**Problem:** `Unable to connect to server`
-
-**Fixes:**
-
-- Check that the ForTunnels server is reachable: `curl https://fortunnels.ru/api/health`
-- Check network settings and firewall
-
-### Tunnel is not created
-
-**Problem:** `Failed to create tunnel`
-
-**Fixes:**
-
-- Check authentication: use `-login`/`-pass` or `-token`
-- Ensure the local service is reachable: `curl http://localhost:8000`
-- Check address format: must be `host:port` (e.g. `127.0.0.1:8000`)
-
-### Combined monthly traffic is exhausted
-
-The client prints the combined monthly-traffic message once, stops its transport, and exits with a nonzero status. Reconnecting or recreating the tunnel does not reset account usage. Wait for the next UTC month or ask an administrator to increase the allowance, then run the authenticated command again.
-
-### Backend unreachable or public 502
-
-The tunnel remains active when the local backend is temporarily unavailable.
-Each later public request retries the local connection, so a recovered backend
-starts serving without recreating the tunnel.
-
-If `localhost` works but `127.0.0.1` is refused, the service is probably
-listening only on IPv6. Compare:
-
-```bash
-curl -I http://localhost:4321/
-curl -I http://127.0.0.1:4321/
-```
-
-For an IPv6-only HTTP service, start the tunnel with either:
-
-```bash
-./bin/client http localhost:4321
-./bin/client -protocol http -local '[::1]:4321'
-```
-
-### Empty PSK during encryption
-
-**Problem:** `empty PSK`
-
-**Fix:** When using `-encrypt`, provide a non-empty `-psk`:
-
-```bash
-./bin/client 8000 -encrypt -psk "your-secret-key-here"
-```
-
-### Connection timeouts
-
-**Problem:** connections drop
-
-**Fixes:**
-
-- Increase timeouts: `-ping-timeout 30s`, `-smux-keepalive-timeout 120s`
-- Check internet stability
-- Use `-watch` to monitor tunnel state
-
-### UDP does not work
-
-**Problem:** UDP packets do not pass
-
-**Fixes:**
-
-- Ensure both flags are set: `-udp-listen` and `-udp-dst`
-- Check that UDP is enabled on the server
-- Try a different transport: `-dp quic` or `-dp dtls`
-
-## Project structure
-
-```text
-client/
-|-- cmd/client/          # CLI entrypoint
-|-- internal/
-|   |-- auth/            # Authentication
-|   |-- config/          # Configuration and validation
-|   |-- control/         # Control-plane operations
-|   |-- dataplane/       # Data-plane transports (WS, QUIC, DTLS)
-|   |-- security/        # Encryption (PSK)
-|   `-- support/         # Utilities and error handling
-|-- shared/
-|   `-- wsconn/          # WebSocket adapter for smux
-|-- Makefile             # Build/test/release targets
-|-- go.mod               # Go module
-`-- .golangci.yml        # Linter settings
-```
-
-## Code checks
-
-Project uses custom linter configuration (`.golangci.yml`) tuned for CLI apps:
-
-- `make format` - rewrite sources (`gofumpt -w`, `goimports -w`)
-- `make format-check` - read-only format gate (fails if sources need formatting)
-- `make lint` - `format-check`, then golangci-lint with `.golangci.yml` and `.golangci-structure.yml`
-- `make check` - full checks (go vet, tests, `make lint`, govulncheck)
-- All checks run automatically on `make build` (checks do not rewrite sources)
-
-Strictness highlights:
-
-- Readability: `gofmt`, `goimports` and `gci` import grouping, `lll` (max line length 200), `whitespace`, `misspell`, `stylecheck`, `gosimple`, `revive`, `gocritic` style checks
-- Defects: `staticcheck`, `govet`, `errcheck`, `errorlint`, `bodyclose`, `noctx`, `contextcheck`, `nilerr`, `testifylint`
-- `funlen` max 120 lines and 120 statements per function, `gocyclo` limited to 35
-- Changed lines also meet `.golangci-structure.yml`: `funlen` 60 lines / 40 statements, `gocyclo` 10, at most 4 arguments
-- Duplicate finder (`dupl`) triggers at 50 tokens
-- Any `//nolint` must include an explanation and list of linters
-- Docs and YAML: `.markdownlint-cli2.jsonc` and `.yamllint.yml`
-
-## Supported platforms
-
-- Linux (amd64, arm64)
-- macOS (amd64, arm64)
-- Windows (amd64, arm64, x86)
+On Windows, use `go build -o fortunnels.exe ./cmd/client`.
 
 ## License
 
-Proprietary License - see [LICENSE](LICENSE) for details.
-This software is proprietary and may not be reused in other projects.
-
-## Links
-
-- [ForTunnels](https://fortunnels.ru) - official site
+The CLI is distributed under the [ForTunnels proprietary license](LICENSE).
