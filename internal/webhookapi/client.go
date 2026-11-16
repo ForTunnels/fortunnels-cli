@@ -30,8 +30,8 @@ type Client struct {
 	http    *http.Client
 }
 
-// New builds a client. baseURL may be empty to use DefaultBaseURL.
-func New(baseURL, token string) *Client {
+// NewWebhookClient builds a client. baseURL may be empty to use DefaultBaseURL.
+func NewWebhookClient(baseURL, token string) *Client {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
@@ -91,8 +91,8 @@ func asError(err error, target **Error) bool {
 }
 
 // Send dispatches one test event.
-func (c *Client) Send(ctx context.Context, req *SendRequest) (SendResult, error) {
-	var out SendResult
+func (c *Client) Send(ctx context.Context, req *SendRequest) (WebhookClientSendResult, error) {
+	var out WebhookClientSendResult
 	err := c.doJSON(ctx, &jsonCall{method: http.MethodPost, path: apiBase + "/events/send", body: req, out: &out})
 	return out, err
 }
@@ -130,20 +130,20 @@ func postJSON[T any](ctx context.Context, c *Client, path string, body requestPa
 }
 
 // ListMock returns the endpoint's mock rules.
-func (c *Client) ListMock(ctx context.Context, endpointID string) ([]MockRule, error) {
+func (c *Client) ListMock(ctx context.Context, endpointID string) ([]StubRule, error) {
 	q := url.Values{}
 	q.Set("endpoint_id", endpointID)
 	var out struct {
-		Rules []MockRule `json:"rules"`
+		Rules []StubRule `json:"rules"`
 	}
 	err := c.doJSON(ctx, &jsonCall{method: http.MethodGet, path: apiBase + "/mock/rules", query: q, out: &out})
 	return out.Rules, err
 }
 
 // CreateMock creates one mock rule.
-func (c *Client) CreateMock(ctx context.Context, endpointID string, in *MockRuleInput) (MockRule, error) {
+func (c *Client) CreateMock(ctx context.Context, endpointID string, in *UpsertStubRuleRequest) (StubRule, error) {
 	var out struct {
-		Rule MockRule `json:"rule"`
+		Rule StubRule `json:"rule"`
 	}
 	body := map[string]any{
 		"endpoint_id": endpointID,
@@ -161,9 +161,9 @@ func (c *Client) CreateMock(ctx context.Context, endpointID string, in *MockRule
 }
 
 // UpdateMock updates one mock rule.
-func (c *Client) UpdateMock(ctx context.Context, endpointID, ruleID string, in *MockRuleInput) (MockRule, error) {
+func (c *Client) UpdateMock(ctx context.Context, endpointID, ruleID string, in *UpsertStubRuleRequest) (StubRule, error) {
 	var out struct {
-		Rule MockRule `json:"rule"`
+		Rule StubRule `json:"rule"`
 	}
 	body := map[string]any{
 		"endpoint_id": endpointID,

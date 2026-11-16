@@ -28,7 +28,7 @@ import (
 
 func TestRecovery_ProvisionAttachAndGracefulShutdown(t *testing.T) {
 	runtime := &recoveryTestRuntime{
-		t: t, tunnel: ctrl.Response{ID: "saved", Protocol: "http", TargetAddr: "localhost:3000", UserID: 7, PublicURL: "https://saved.example.test"},
+		t: t, tunnel: ctrl.TunnelResponse{ID: "saved", Protocol: "http", TargetAddr: "localhost:3000", UserID: 7, PublicURL: "https://saved.example.test"},
 		ready: make(chan struct{}), attached: make(chan struct{}), released: make(chan struct{}),
 	}
 	server := httptest.NewServer(http.HandlerFunc(runtime.serveHTTP))
@@ -75,7 +75,7 @@ func TestRecovery_ProvisionAttachAndGracefulShutdown(t *testing.T) {
 
 type recoveryTestRuntime struct {
 	t        *testing.T
-	tunnel   ctrl.Response
+	tunnel   ctrl.TunnelResponse
 	ready    chan struct{}
 	attached chan struct{}
 	released chan struct{}
@@ -87,7 +87,7 @@ func (r *recoveryTestRuntime) serveHTTP(w http.ResponseWriter, req *http.Request
 	switch req.Method + " " + req.URL.Path {
 	case "POST /api/tunnels/reusable":
 		w.WriteHeader(http.StatusCreated)
-		assert.NoError(r.t, json.NewEncoder(w).Encode(ctrl.CreatedTunnel{Response: r.tunnel}))
+		assert.NoError(r.t, json.NewEncoder(w).Encode(ctrl.CreatedTunnel{TunnelResponse: r.tunnel}))
 	case "POST /api/tunnels/saved/attach":
 		grant := protocolv1.TunnelAttachmentResponse{Tunnel: r.tunnel, DPAuth: "fixture-key", AttachmentTicket: "fixture-ticket"}
 		assert.NoError(r.t, json.NewEncoder(w).Encode(grant))
@@ -95,7 +95,7 @@ func (r *recoveryTestRuntime) serveHTTP(w http.ResponseWriter, req *http.Request
 		r.serveDataplane(w, req)
 	case "GET /api/tunnels":
 		r.poll.Do(func() { close(r.attached) })
-		assert.NoError(r.t, json.NewEncoder(w).Encode(map[string]any{"exists": true, "tunnels": []ctrl.Response{r.tunnel}}))
+		assert.NoError(r.t, json.NewEncoder(w).Encode(map[string]any{"exists": true, "tunnels": []ctrl.TunnelResponse{r.tunnel}}))
 	default:
 		r.t.Errorf("unexpected recovery request %s %s", req.Method, req.URL.Path)
 		http.NotFound(w, req)
@@ -196,9 +196,9 @@ func TestRecovery_RetriesOnlyOccupiedAndKeepsDeadlineThroughBind(t *testing.T) {
 			}
 			return &ctrl.TunnelAttachment{Headers: http.Header{protocolv1.AttachmentHeader: {"ticket"}}}, nil
 		},
-		validate: func(*ctrl.Response) error { return nil },
+		validate: func(*ctrl.TunnelResponse) error { return nil },
 		waiting:  func() { waiting++ },
-		ready:    func(*ctrl.Response) { ready++ },
+		ready:    func(*ctrl.TunnelResponse) { ready++ },
 		delay:    func(context.Context) error { return nil },
 	}
 	require.NoError(t, e.run(t.Context(), func(ctx context.Context, h http.Header) error {
@@ -218,9 +218,9 @@ func TestRecovery_AmbiguousBindAndCancellationEndEpisode(t *testing.T) {
 	ambiguous := errors.New("transport ended before acknowledgement")
 	e := recoveryEpisode{
 		request:  func(context.Context) (*ctrl.TunnelAttachment, error) { return &ctrl.TunnelAttachment{}, nil },
-		validate: func(*ctrl.Response) error { return nil },
+		validate: func(*ctrl.TunnelResponse) error { return nil },
 		waiting:  func() { t.Fatal("transport errors must not retry") },
-		ready:    func(*ctrl.Response) { t.Fatal("connection was never ready") },
+		ready:    func(*ctrl.TunnelResponse) { t.Fatal("connection was never ready") },
 	}
 	require.ErrorIs(t, e.run(t.Context(), func(context.Context, http.Header) error { return ambiguous }), ambiguous)
 

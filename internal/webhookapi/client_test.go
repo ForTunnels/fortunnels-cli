@@ -20,7 +20,7 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) *Client {
 	t.Helper()
 	srv := httptest.NewServer(handler)
 	t.Cleanup(srv.Close)
-	return New(srv.URL, testToken)
+	return NewWebhookClient(srv.URL, testToken)
 }
 
 // checkRequest reports a request whose method, path or bearer token differ from
@@ -75,7 +75,7 @@ func TestNewNormalizesBaseURLAndToken(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			c := New(tc.baseURL, tc.token)
+			c := NewWebhookClient(tc.baseURL, tc.token)
 			if c.baseURL != tc.wantURL {
 				t.Errorf("baseURL = %q, want %q", c.baseURL, tc.wantURL)
 			}
@@ -98,7 +98,7 @@ func TestSendPostsEventAndDecodesResult(t *testing.T) {
 		if got.EndpointID != "ep-1" || got.Request.Path != "/hook" {
 			t.Errorf("send body = %+v, want endpoint ep-1 and path /hook", got)
 		}
-		writeJSON(t, w, http.StatusOK, SendResult{EventID: "evt-1", Delivered: true, DownstreamStatus: &status})
+		writeJSON(t, w, http.StatusOK, WebhookClientSendResult{EventID: "evt-1", Delivered: true, DownstreamStatus: &status})
 	})
 
 	res, err := c.Send(t.Context(), &SendRequest{EndpointID: "ep-1", Request: SendRequestReq{Method: "POST", Path: "/hook"}})
@@ -130,7 +130,7 @@ func TestListEventsSendsOnlySetQueryParams(t *testing.T) {
 				if r.URL.RawQuery != tc.wantQuery {
 					t.Errorf("query = %q, want %q", r.URL.RawQuery, tc.wantQuery)
 				}
-				writeJSON(t, w, http.StatusOK, ListEventsResponse{Events: []Event{{ID: "evt-1", Status: 200}}, NextCursor: "c-2", HasMore: true})
+				writeJSON(t, w, http.StatusOK, ListEventsResponse{Events: []WebhookClientEvent{{ID: "evt-1", Status: 200}}, NextCursor: "c-2", HasMore: true})
 			})
 
 			page, err := c.ListEvents(t.Context(), "ep-1", tc.cursor, tc.limit)
@@ -152,7 +152,7 @@ func TestWaitPostsMatcherAndReturnsMatchedEvent(t *testing.T) {
 		if got.TimeoutMS != 5000 || got.Matcher["path"] != "/hook" {
 			t.Errorf("wait body = %+v, want timeout 5000 and path matcher", got)
 		}
-		writeJSON(t, w, http.StatusOK, WaitResponse{Matched: true, Cursor: "c-2", Event: &Event{ID: "evt-2", Status: 200}})
+		writeJSON(t, w, http.StatusOK, WaitResponse{Matched: true, Cursor: "c-2", Event: &WebhookClientEvent{ID: "evt-2", Status: 200}})
 	})
 
 	res, err := c.Wait(t.Context(), WaitRequest{EndpointID: "ep-1", TimeoutMS: 5000, Matcher: WaitMatcher{"path": "/hook"}})
@@ -201,7 +201,7 @@ func TestListMockReadsRulesForEndpoint(t *testing.T) {
 		if got := r.URL.Query().Get("endpoint_id"); got != "ep-1" {
 			t.Errorf("endpoint_id = %q, want ep-1", got)
 		}
-		writeJSON(t, w, http.StatusOK, map[string]any{"rules": []MockRule{{
+		writeJSON(t, w, http.StatusOK, map[string]any{"rules": []StubRule{{
 			ID:            "r-1",
 			Enabled:       true,
 			MockRuleMatch: MockRuleMatch{Method: "GET", PathMode: "exact", Path: "/x"},
@@ -226,11 +226,11 @@ func TestCreateMockPostsRuleAndReturnsIt(t *testing.T) {
 		if got["endpoint_id"] != "ep-1" || got["path"] != "/x" || got["enabled"] != true {
 			t.Errorf("create body = %v, want endpoint ep-1, path /x, enabled", got)
 		}
-		writeJSON(t, w, http.StatusCreated, map[string]any{"rule": MockRule{ID: "r-new", Version: 1}})
+		writeJSON(t, w, http.StatusCreated, map[string]any{"rule": StubRule{ID: "r-new", Version: 1}})
 	})
 
 	enabled := true
-	rule, err := c.CreateMock(t.Context(), "ep-1", &MockRuleInput{
+	rule, err := c.CreateMock(t.Context(), "ep-1", &UpsertStubRuleRequest{
 		Priority: 2,
 		Enabled:  &enabled,
 		Method:   "GET",
@@ -259,10 +259,10 @@ func TestUpdateMockPatchesEscapedRuleID(t *testing.T) {
 		if body["version"] != float64(3) {
 			t.Errorf("version = %v, want 3", body["version"])
 		}
-		writeJSON(t, w, http.StatusOK, map[string]any{"rule": MockRule{ID: "a b", Version: 4}})
+		writeJSON(t, w, http.StatusOK, map[string]any{"rule": StubRule{ID: "a b", Version: 4}})
 	})
 
-	rule, err := c.UpdateMock(t.Context(), "ep-1", "a b", &MockRuleInput{Priority: 1, Response: MockResp{Status: http.StatusOK}, Version: 3})
+	rule, err := c.UpdateMock(t.Context(), "ep-1", "a b", &UpsertStubRuleRequest{Priority: 1, Response: MockResp{Status: http.StatusOK}, Version: 3})
 	if err != nil {
 		t.Fatalf("UpdateMock: %v", err)
 	}
@@ -363,7 +363,7 @@ func TestUndecodableSuccessBodyIsNotAnAPIError(t *testing.T) {
 
 func TestTransportFailureIsWrapped(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	c := New(srv.URL, testToken)
+	c := NewWebhookClient(srv.URL, testToken)
 	srv.Close()
 
 	_, err := c.ListMock(t.Context(), "ep-1")
@@ -373,7 +373,7 @@ func TestTransportFailureIsWrapped(t *testing.T) {
 }
 
 func TestMalformedBaseURLFailsRequestBuild(t *testing.T) {
-	c := New("http://[::1", testToken)
+	c := NewWebhookClient("http://[::1", testToken)
 
 	_, err := c.ListEvents(t.Context(), "ep-1", "", 0)
 	if err == nil || !strings.Contains(err.Error(), "build request") {

@@ -31,10 +31,10 @@ func TestRecovery_OwnerHeadersAndExactRoutes(t *testing.T) {
 			assert.NoError(t, json.NewDecoder(r.Body).Decode(&request))
 			assert.Equal(t, "localhost:8080", request.TargetAddr)
 			w.WriteHeader(http.StatusCreated)
-			assert.NoError(t, json.NewEncoder(w).Encode(CreatedTunnel{Response: Response{ID: "saved"}}))
+			assert.NoError(t, json.NewEncoder(w).Encode(CreatedTunnel{TunnelResponse: TunnelResponse{ID: "saved"}}))
 		case "/api/tunnels/saved/attach":
 			assert.NoError(t, json.NewEncoder(w).Encode(protocolv1.TunnelAttachmentResponse{
-				Tunnel: Response{ID: "saved", PublicURL: "https://saved.example.test"},
+				Tunnel: TunnelResponse{ID: "saved", PublicURL: "https://saved.example.test"},
 				DPAuth: "proof", AttachmentTicket: "one-use",
 			}))
 		default:

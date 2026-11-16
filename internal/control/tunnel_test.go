@@ -39,7 +39,7 @@ func TestResponseUnmarshal(t *testing.T) {
 		"bytes_used": 0
 	}`
 
-	var resp Response
+	var resp TunnelResponse
 	err := json.Unmarshal([]byte(serverResponse), &resp)
 	require.NoError(t, err, "Failed to unmarshal response")
 	assert.Equal(t, int64(100), resp.UserID, "Expected UserID=100")
@@ -62,7 +62,7 @@ func TestResponseUnmarshalGuestUser(t *testing.T) {
 		"bytes_used": 0
 	}`
 
-	var resp Response
+	var resp TunnelResponse
 	err := json.Unmarshal([]byte(serverResponse), &resp)
 	require.NoError(t, err, "Failed to unmarshal guest response")
 	assert.Equal(t, int64(0), resp.UserID, "Expected UserID=0 for guest")

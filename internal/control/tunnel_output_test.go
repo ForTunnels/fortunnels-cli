@@ -39,7 +39,7 @@ func TestPrintTunnelInfo_GuestBannerUsesServerTrafficLimit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			out := &capturedOutput{}
-			PrintTunnelInfoWithOutput(out, "https://server.test", &Response{
+			PrintTunnelInfoWithOutput(out, "https://server.test", &TunnelResponse{
 				ID: "t1", IsGuest: true, ExpiresAt: expires, TrafficLimitBytes: tt.limit,
 			})
 
@@ -80,7 +80,7 @@ func TestCreateTunnel_LocalHTTPSTargetsSkipVerification(t *testing.T) {
 
 func TestPrintTunnelInfo_GuestShowsSignupHint(t *testing.T) {
 	out := &capturedOutput{}
-	PrintTunnelInfoWithOutput(out, "https://fortunnels.ru", &Response{ID: "t1", IsGuest: true})
+	PrintTunnelInfoWithOutput(out, "https://fortunnels.ru", &TunnelResponse{ID: "t1", IsGuest: true})
 
 	text := out.text()
 	assert.Contains(t, text,
@@ -92,14 +92,14 @@ func TestPrintTunnelInfo_GuestShowsSignupHint(t *testing.T) {
 
 func TestPrintTunnelInfo_NonGuestHasNoSignupHint(t *testing.T) {
 	out := &capturedOutput{}
-	PrintTunnelInfoWithOutput(out, "https://fortunnels.ru", &Response{ID: "t1"})
+	PrintTunnelInfoWithOutput(out, "https://fortunnels.ru", &TunnelResponse{ID: "t1"})
 
 	assert.NotContains(t, out.text(), "register=1")
 }
 
 func TestPrintTunnelInfo_GuestHintSkippedForUnparsableServerURL(t *testing.T) {
 	out := &capturedOutput{}
-	PrintTunnelInfoWithOutput(out, "://bad", &Response{ID: "t1", IsGuest: true})
+	PrintTunnelInfoWithOutput(out, "://bad", &TunnelResponse{ID: "t1", IsGuest: true})
 
 	assert.Contains(t, out.text(), "Гостевой туннель")
 	assert.NotContains(t, out.text(), "register=1")

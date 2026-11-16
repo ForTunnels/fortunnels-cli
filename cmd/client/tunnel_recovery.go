@@ -35,8 +35,8 @@ var (
 
 type recoveryEpisode struct {
 	request  func(context.Context) (*ctrl.TunnelAttachment, error)
-	validate func(*ctrl.Response) error
-	ready    func(*ctrl.Response)
+	validate func(*ctrl.TunnelResponse) error
+	ready    func(*ctrl.TunnelResponse)
 	waiting  func()
 	delay    func(context.Context) error
 }
@@ -154,7 +154,7 @@ func serveRecoveryTunnel(ctx context.Context, client ctrl.RecoveryClient, watch 
 		return err
 	}
 	watchTunnel(serveCtx, terminal, watch)
-	incoming := incomingTunnel(cfg, &ctrl.Response{ID: watch.id}, "")
+	incoming := incomingTunnel(cfg, &ctrl.TunnelResponse{ID: watch.id}, "")
 	incoming.Manager = manager
 	return waitForProtocol(serveCtx, terminal, serveIncomingTunnel(serveCtx, terminal, cfg, incoming), serveExit{})
 }
@@ -164,7 +164,7 @@ func newRecoveryEpisode(watch *tunnelWatch, client ctrl.RecoveryClient) recovery
 	first := true
 	return recoveryEpisode{
 		request: func(ctx context.Context) (*ctrl.TunnelAttachment, error) { return client.Attach(ctx, id) },
-		validate: func(tun *ctrl.Response) error {
+		validate: func(tun *ctrl.TunnelResponse) error {
 			if first {
 				return config.ResolveAttachmentTarget(cfg, tun.Protocol, tun.TargetAddr)
 			}
@@ -174,7 +174,7 @@ func newRecoveryEpisode(watch *tunnelWatch, client ctrl.RecoveryClient) recovery
 			}
 			return nil
 		},
-		ready: func(tun *ctrl.Response) {
+		ready: func(tun *ctrl.TunnelResponse) {
 			first = false
 			fmt.Printf("✅ Tunnel attached successfully!\n🔗 Public URL: %s\n🆔 Tunnel ID: %s\n", tun.PublicURL, tun.ID)
 		},

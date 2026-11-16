@@ -45,7 +45,7 @@ func TestPrintTunnelInfo(t *testing.T) {
 	r, w, _ := os.Pipe()
 	os.Stdout = w
 
-	tun := &ctrlTunnel.Response{
+	tun := &ctrlTunnel.TunnelResponse{
 		ID:         "tid",
 		UserID:     100,
 		TargetAddr: "127.0.0.1:8000",

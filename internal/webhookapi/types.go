@@ -48,16 +48,16 @@ type SendRequestReq struct {
 	Body        string            `json:"body,omitempty"`
 }
 
-// SendResult is the send outcome.
-type SendResult struct {
+// WebhookClientSendResult is the send outcome.
+type WebhookClientSendResult struct {
 	EventID          string `json:"event_id"`
 	Delivered        bool   `json:"delivered"`
 	DownstreamStatus *int   `json:"downstream_status,omitempty"`
 	Notes            string `json:"notes,omitempty"`
 }
 
-// Event is the masked captured event returned by list/wait.
-type Event struct {
+// WebhookClientEvent is the masked captured event returned by list/wait.
+type WebhookClientEvent struct {
 	ID        string            `json:"id"`
 	Timestamp string            `json:"timestamp"`
 	TunnelID  string            `json:"tunnel_id"`
@@ -71,9 +71,9 @@ type Event struct {
 
 // ListEventsResponse is a page of events plus the opaque next cursor.
 type ListEventsResponse struct {
-	Events     []Event `json:"events"`
-	NextCursor string  `json:"next_cursor,omitempty"`
-	HasMore    bool    `json:"has_more"`
+	Events     []WebhookClientEvent `json:"events"`
+	NextCursor string               `json:"next_cursor,omitempty"`
+	HasMore    bool                 `json:"has_more"`
 }
 
 // WaitMatcher is the JSON object of a wait matcher as sent on the wire.
@@ -89,9 +89,9 @@ type WaitRequest struct {
 
 // WaitResponse is the wait outcome; Event is nil when nothing matched.
 type WaitResponse struct {
-	Event   *Event `json:"event,omitempty"`
-	Cursor  string `json:"cursor,omitempty"`
-	Matched bool   `json:"matched"`
+	Event   *WebhookClientEvent `json:"event,omitempty"`
+	Cursor  string              `json:"cursor,omitempty"`
+	Matched bool                `json:"matched"`
 }
 
 // ClearRequest bounds a test-data deletion.
@@ -117,8 +117,8 @@ type MockRuleMatch struct {
 	MatchAll bool   `json:"match_all"`
 }
 
-// MockRule is the Stage 7 mock rule projection.
-type MockRule struct {
+// StubRule is the Stage 7 mock rule projection.
+type StubRule struct {
 	ID       string `json:"id"`
 	TunnelID string `json:"tunnel_id"`
 	Priority int    `json:"priority"`
@@ -132,20 +132,20 @@ type MockRule struct {
 
 // MockResp is the mock rule response descriptor.
 type MockResp struct {
-	Status  int          `json:"status"`
-	Headers []MockHeader `json:"headers"`
-	Body    string       `json:"body"`
-	DelayMS int          `json:"delay_ms"`
+	Status  int                  `json:"status"`
+	Headers []StubResponseHeader `json:"headers"`
+	Body    string               `json:"body"`
+	DelayMS int                  `json:"delay_ms"`
 }
 
-// MockHeader is a mock response header.
-type MockHeader struct {
+// StubResponseHeader is a mock response header.
+type StubResponseHeader struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }
 
-// MockRuleInput is the create/update payload.
-type MockRuleInput struct {
+// UpsertStubRuleRequest is the create/update payload.
+type UpsertStubRuleRequest struct {
 	Priority int      `json:"priority"`
 	Enabled  *bool    `json:"enabled,omitempty"`
 	Method   string   `json:"method,omitempty"`

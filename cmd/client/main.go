@@ -146,7 +146,7 @@ func runClientWorkflow(cfg *config.Config) error {
 		return clierrors.HandleTunnelCreationError(err, cfg.ServerURL, cfg.Protocol, cfg.TargetAddr)
 	}
 
-	tun := &created.Response
+	tun := &created.TunnelResponse
 	if err := auth.CheckBearerNotRejectedAsGuest(bearer, cfg.TokenFromConfigFile, auth.TunnelGuestSignals{
 		IsGuest: tun.IsGuest,
 		UserID:  tun.UserID,
@@ -187,7 +187,7 @@ func runClientWorkflow(cfg *config.Config) error {
 
 // incomingTunnel describes the created tunnel for the expose-local serve loops,
 // including the configured --backoff-initial/--backoff-max.
-func incomingTunnel(cfg *config.Config, tun *ctrl.Response, dpAuthToken string) *dp.IncomingTunnel {
+func incomingTunnel(cfg *config.Config, tun *ctrl.TunnelResponse, dpAuthToken string) *dp.IncomingTunnel {
 	return &dp.IncomingTunnel{
 		ServerURL: cfg.ServerURL, TunnelID: tun.ID, AuthToken: dpAuthToken, Backoff: cfg.ReconnectBackoff(),
 		Target: cfg.TargetAddr, Encryption: cfg.EncryptionSettings(),

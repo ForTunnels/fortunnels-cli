@@ -24,13 +24,13 @@ import (
 	protocolv1 "github.com/fortunnels/client/shared/protocol/v1"
 )
 
-type Response = protocolv1.Tunnel
+type TunnelResponse = protocolv1.Tunnel
 
 // CreatedTunnel is the response to creating a tunnel: the tunnel plus the
 // data-plane credential the server issues only in that response, never on list
 // or detail requests.
 type CreatedTunnel struct {
-	Response
+	TunnelResponse
 	DPAuth string `json:"dp_auth,omitempty"`
 }
 
@@ -240,11 +240,11 @@ func DeleteTunnelWithClient(ctx context.Context, serverURL, tunnelID string, cli
 
 // printTunnelInfo displays comprehensive information about the created tunnel.
 // serverURL is the API base URL (e.g. https://fortunnels.ru); used to fix tcp/udp loopback public URLs in the CLI.
-func PrintTunnelInfo(serverURL string, tunnel *Response) {
+func PrintTunnelInfo(serverURL string, tunnel *TunnelResponse) {
 	PrintTunnelInfoWithOutput(StdOutput{}, serverURL, tunnel)
 }
 
-func PrintTunnelInfoWithOutput(out Output, serverURL string, tunnel *Response) {
+func PrintTunnelInfoWithOutput(out Output, serverURL string, tunnel *TunnelResponse) {
 	if out == nil {
 		out = StdOutput{}
 	}
@@ -308,7 +308,7 @@ func formatByteSize(n int64) string {
 }
 
 // WarnGuestTunnelWithLogin prints a stderr hint when login was provided but the tunnel is guest.
-func WarnGuestTunnelWithLogin(loginUsed bool, tunnel *Response) {
+func WarnGuestTunnelWithLogin(loginUsed bool, tunnel *TunnelResponse) {
 	if !loginUsed || tunnel == nil || !tunnel.IsGuest {
 		return
 	}

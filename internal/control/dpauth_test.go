@@ -20,7 +20,7 @@ func TestCreatedTunnelCarriesIssuedDPAuth(t *testing.T) {
 	assert.True(t, created.IsGuest)
 	assert.Equal(t, "abc123", created.DPAuth)
 
-	var listed Response
+	var listed TunnelResponse
 	require.NoError(t, json.Unmarshal([]byte(`{"id":"t-2","dp_auth":"never-on-list"}`), &listed))
 	assert.Equal(t, "t-2", listed.ID, "list responses stay plain tunnels")
 }

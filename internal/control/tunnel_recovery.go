@@ -55,7 +55,7 @@ func (c RecoveryClient) Provision(ctx context.Context, target, protocol, owner s
 
 // TunnelAttachment contains the owned tunnel and headers for its one data-plane upgrade.
 type TunnelAttachment struct {
-	Tunnel  Response
+	Tunnel  TunnelResponse
 	Headers http.Header
 }
 

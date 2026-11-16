@@ -20,7 +20,7 @@ func TestIncomingTunnelCarriesTargetAndEncryption(t *testing.T) {
 		Encrypt: true, PSK: "k",
 	}
 
-	got := incomingTunnel(cfg, &ctrl.Response{ID: "t1"}, "")
+	got := incomingTunnel(cfg, &ctrl.TunnelResponse{ID: "t1"}, "")
 
 	require.Equal(t, "localhost:3000", got.Target)
 	require.Equal(t, config.EncryptionSettings{Enabled: true, PSK: "k"}, got.Encryption)
@@ -29,7 +29,7 @@ func TestIncomingTunnelCarriesTargetAndEncryption(t *testing.T) {
 func TestIncomingTunnelCarriesConfiguredBackoff(t *testing.T) {
 	cfg := &config.Config{ServerURL: "https://example.test", BackoffInitial: 3 * time.Second, BackoffMax: 45 * time.Second}
 
-	got := incomingTunnel(cfg, &ctrl.Response{ID: "t1"}, "dp-token")
+	got := incomingTunnel(cfg, &ctrl.TunnelResponse{ID: "t1"}, "dp-token")
 
 	require.Equal(t, &dp.IncomingTunnel{
 		ServerURL: "https://example.test",
