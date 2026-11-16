@@ -80,6 +80,7 @@ func TestValidateServerURL(t *testing.T) {
 		{"configured local admin http for tests", "http://admin.localhost:8080", false},
 		{"configured IPv6 localhost http for tests", "http://[::1]:8080", false},
 		{"configured docker service http for tests", "http://server:8080", false},
+		{"remote IPv6 http rejected", "http://[2001:db8::1]:8080", true},
 		{"missing protocol", "127.0.0.1:8080", true},
 		{"invalid url", "http://", true},
 		{"remote http rejected", "http://staging.fortunnels.ru", true},
@@ -192,6 +193,9 @@ func TestIsLocalServerHost(t *testing.T) {
 		"staging.fortunnels.ru":            false,
 		"fortunnels.localhost.example.com": false,
 		"127.0.0.2":                        false,
+		"2001:db8::1":                      false,
+		"fe80::1%eth0":                     false,
+		"10.0.0.5":                         false,
 	}
 	for host, want := range tests {
 		require.Equal(t, want, isLocalServerHost(host), "isLocalServerHost(%q)", host)
@@ -274,5 +278,23 @@ func TestValidateLoginRequiresPassword(t *testing.T) {
 				require.NoError(t, err)
 			}
 		})
+	}
+}
+
+func TestValidateRejectsUnknownDataPlaneTransport(t *testing.T) {
+	for plane, wantErr := range map[string]bool{
+		"": false, "ws": false, "quic": false, "DTLS": false, " quic ": false,
+		"quik": true, "tcp": true,
+	} {
+		cfg := defaultConfig()
+		cfg.ServerURL = "https://example.com"
+		cfg.TargetAddr = "127.0.0.1:8000"
+		cfg.DataPlane = plane
+		err := Validate(cfg)
+		if !wantErr {
+			require.NoError(t, err, "data plane %q", plane)
+			continue
+		}
+		require.ErrorIs(t, err, errUnknownDataPlane, "data plane %q", plane)
 	}
 }

@@ -14,6 +14,8 @@ import (
 	"unicode"
 )
 
+var errServerUnreachable = errors.New("❌ Unable to connect to server")
+
 // HandleTunnelCreationError formats a user-friendly error for tunnel creation failures.
 // Returns an error for the caller to handle (e.g. main exits); does not call os.Exit.
 func HandleTunnelCreationError(err error, serverURL string, tunnelContext ...string) error {
@@ -21,13 +23,22 @@ func HandleTunnelCreationError(err error, serverURL string, tunnelContext ...str
 	if isAuthenticationRequired(err) && requiresSignedInAccount(protocol) {
 		return accountRequiredTunnelError(protocol, target, serverURL)
 	}
-	if IsConnRefused(err) || IsDialTimeout(err) {
-		return fmt.Errorf("❌ Unable to connect to server: %s\n   Make sure the server is running. Hint: make run-dev", serverURL)
+	if !serverAnswered(err) && (IsConnRefused(err) || IsDialTimeout(err)) {
+		return fmt.Errorf("%w: %s\n   Make sure the server is running", errServerUnreachable, serverURL)
 	}
 	if err != nil {
 		return fmt.Errorf("❌ Failed to create tunnel: %w", err)
 	}
 	return fmt.Errorf("❌ Failed to create tunnel: unknown error")
+}
+
+// serverAnswered reports whether err carries an HTTP status. The server was
+// reached and replied, so its message must not be read as a connection failure
+// just because it mentions a timeout or a refused connection.
+func serverAnswered(err error) bool {
+	type httpStatusError interface{ HTTPStatus() int }
+	var answered httpStatusError
+	return errors.As(err, &answered) && answered.HTTPStatus() > 0
 }
 
 func isAuthenticationRequired(err error) bool {

@@ -277,10 +277,7 @@ func runWebhookWaitOrAssert(args []string, assert bool) int {
 			fmt.Fprintf(os.Stderr, "no matching event within %d ms\n", *timeoutMS)
 			return exitFail
 		}
-		waitMS := int(remaining.Milliseconds())
-		if waitMS > step {
-			waitMS = step
-		}
+		waitMS := waitSliceMS(remaining, step)
 		resp, err := client.Wait(context.Background(), webhookapi.WaitRequest{
 			EndpointID: *ep, Cursor: curr, TimeoutMS: waitMS, Matcher: matcher,
 		})
@@ -311,6 +308,13 @@ func runWebhookWaitOrAssert(args []string, assert bool) int {
 			}
 		}
 	}
+}
+
+// waitSliceMS is the server-side wait of the next request: the time left until
+// the deadline, capped at step. The server reads 0 as "use the maximum wait",
+// so a remainder below one millisecond still asks for 1 ms.
+func waitSliceMS(remaining time.Duration, step int) int {
+	return max(min(int(remaining.Milliseconds()), step), 1)
 }
 
 // --- clear ----------------------------------------------------------------

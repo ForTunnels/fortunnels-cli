@@ -140,7 +140,7 @@ func (e *nonTimeoutError) Timeout() bool   { return false }
 func (e *nonTimeoutError) Temporary() bool { return false }
 
 func TestHandleTunnelCreationError(t *testing.T) {
-	serverURL := "http://127.0.0.1:8080"
+	serverURL := "https://fortunnels.example"
 
 	t.Run("conn refused error", func(t *testing.T) {
 		err := HandleTunnelCreationError(
@@ -150,7 +150,8 @@ func TestHandleTunnelCreationError(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected error")
 		}
-		if !strings.Contains(err.Error(), "Unable to connect to server") {
+		want := "❌ Unable to connect to server: https://fortunnels.example\n   Make sure the server is running"
+		if err.Error() != want {
 			t.Errorf("unexpected message: %v", err)
 		}
 	})
@@ -195,4 +196,28 @@ func TestHandleTunnelCreationError(t *testing.T) {
 			t.Errorf("unexpected message: %v", err)
 		}
 	})
+}
+
+// serverAnswerError is a tunnel-creation failure the server itself reported.
+type serverAnswerError struct {
+	status  int
+	message string
+}
+
+func (e serverAnswerError) Error() string   { return e.message }
+func (e serverAnswerError) HTTPStatus() int { return e.status }
+
+func TestHandleTunnelCreationErrorKeepsServerAnswer(t *testing.T) {
+	for _, answer := range []serverAnswerError{
+		{status: 408, message: "server returned status 408: request timeout"},
+		{status: 502, message: "server returned status 502: upstream connection refused"},
+	} {
+		err := HandleTunnelCreationError(answer, "https://example.test")
+		if strings.Contains(err.Error(), "Unable to connect to server") {
+			t.Errorf("status %d reported as a connectivity failure: %v", answer.status, err)
+		}
+		if !strings.Contains(err.Error(), answer.message) {
+			t.Errorf("status %d lost the server message: %v", answer.status, err)
+		}
+	}
 }

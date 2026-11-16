@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"strconv"
@@ -25,6 +26,9 @@ func Validate(cfg *Config) error {
 		return err
 	}
 	if err := validateSelectedProtocol(cfg); err != nil {
+		return err
+	}
+	if err := validateDataPlaneTransport(cfg); err != nil {
 		return err
 	}
 	if err := validateServerURL(cfg.ServerURL); err != nil {
@@ -57,6 +61,26 @@ func Validate(cfg *Config) error {
 
 var errEncryptDataPlane = errors.New("--encrypt is not supported on this data-plane transport")
 
+// Data-plane transports selectable with -dp.
+const (
+	planeWS   = "ws"
+	planeQUIC = "quic"
+	planeDTLS = "dtls"
+)
+
+var errUnknownDataPlane = errors.New("unsupported data-plane transport")
+
+// validateDataPlaneTransport rejects an unknown -dp value. Falling back to WS
+// would silently run a transport the user did not ask for.
+func validateDataPlaneTransport(cfg *Config) error {
+	switch strings.ToLower(strings.TrimSpace(cfg.DataPlane)) {
+	case "", planeWS, planeQUIC, planeDTLS:
+		return nil
+	default:
+		return fmt.Errorf("%w: %q\n   Supported: %s, %s, %s", errUnknownDataPlane, cfg.DataPlane, planeWS, planeQUIC, planeDTLS)
+	}
+}
+
 // validateEncryptDataPlane rejects --encrypt where no PSK layer exists: the
 // QUIC and DTLS reverse UDP planes carry datagrams outside smux streams, so
 // accepting the flag would leave users believing traffic has an extra layer.
@@ -65,7 +89,7 @@ func validateEncryptDataPlane(cfg *Config) error {
 		return nil
 	}
 	switch plane := strings.ToLower(strings.TrimSpace(cfg.DataPlane)); plane {
-	case "quic", "dtls":
+	case planeQUIC, planeDTLS:
 		return fmt.Errorf("%w (-dp %s is already encrypted); use -dp ws or drop --encrypt", errEncryptDataPlane, plane)
 	default:
 		return nil
@@ -143,6 +167,11 @@ func isLocalServerHost(host string) bool {
 	default:
 		if strings.HasSuffix(host, ".localhost") {
 			return true
+		}
+		// An IPv6 literal has no dots either; among IP addresses only the two
+		// loopback literals above are local.
+		if _, err := netip.ParseAddr(host); err == nil {
+			return false
 		}
 		// Docker Compose and other local test stacks use single-label service names.
 		return !strings.Contains(host, ".")

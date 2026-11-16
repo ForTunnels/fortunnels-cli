@@ -44,7 +44,6 @@ func (s Strategy) RunContext(ctx context.Context) error {
 	return runReconnecting(ctx, backoff.initial, backoff.max, s.contextRunner)
 }
 
-// Run executes the strategy.
 // NewStrategy builds a strategy for the requested UDP mode.
 func NewStrategy(
 	kind string,

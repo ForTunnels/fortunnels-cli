@@ -229,6 +229,7 @@ func Parse() (*Config, error) {
 	applyConfigFileAuthtoken(cfg)
 
 	cfg.Protocol = strings.ToLower(strings.TrimSpace(cfg.Protocol))
+	cfg.DataPlane = strings.ToLower(strings.TrimSpace(cfg.DataPlane))
 
 	return cfg, nil
 }
@@ -295,9 +296,14 @@ func normalizeArgs() {
 	}
 	var flagsOnly []string
 	var positionals []string
-	for i := 1; i < len(os.Args); i++ {
+	terminated := false
+	for i := 1; i < len(os.Args) && !terminated; i++ {
 		arg := os.Args[i]
 		switch {
+		case arg == "--":
+			// The terminator ends flag parsing: everything after it is positional.
+			positionals = append(positionals, os.Args[i+1:]...)
+			terminated = true
 		case strings.HasPrefix(arg, "--"):
 			normalized := "-" + strings.TrimPrefix(arg, "--")
 			appendFlagArgument(&flagsOnly, os.Args, &i, normalized)
@@ -306,6 +312,10 @@ func normalizeArgs() {
 		default:
 			positionals = append(positionals, arg)
 		}
+	}
+	if terminated {
+		// Keep the terminator so flag.Parse stops there as well.
+		flagsOnly = append(flagsOnly, "--")
 	}
 	os.Args = append([]string{os.Args[0]}, append(flagsOnly, positionals...)...)
 }

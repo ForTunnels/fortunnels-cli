@@ -331,3 +331,24 @@ func TestApplySecretSourcesStdinConflict(t *testing.T) {
 		t.Fatalf("applySecretSources() expected error for multiple stdin flags")
 	}
 }
+
+func TestParse_DoubleDashEndsFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"client", "--", "tcp", "5433"},
+		{"client", "--watch", "--", "tcp", "5433"},
+		{"client", "--backoff-max", "45", "--", "tcp", "5433"},
+	} {
+		cfg, err := testParseWithArgs(t, args)
+		require.NoError(t, err, "args %v", args)
+		assert.Equal(t, protoTCP, cfg.Protocol, "args %v", args)
+		assert.Equal(t, "localhost:5433", cfg.TargetAddr, "args %v", args)
+	}
+}
+
+func TestParse_NormalizesDataPlane(t *testing.T) {
+	cfg, err := testParseWithArgs(t, []string{
+		"client", "--dp", " QUIC ", "--udp-listen", ":5353", "--udp-dst", "127.0.0.1:53", "--protocol", "udp",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "quic", cfg.DataPlane)
+}

@@ -33,8 +33,7 @@ func logDebug(format string, args ...any) {
 	}
 }
 
-// authMode describes how the lifecycle poller authenticates to the server.
-
+// Watcher prints control-plane lifecycle events and reports terminal ones.
 type Watcher struct {
 	out        Output
 	onTerminal func(error)
