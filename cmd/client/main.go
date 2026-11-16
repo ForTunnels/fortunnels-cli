@@ -103,6 +103,9 @@ func parseConfig() (*config.Config, error) {
 	if err := config.Validate(cfg); err != nil {
 		return nil, &exitCodeError{code: 2, err: fmt.Errorf("❌ %w", err)}
 	}
+	if cfg.TunnelID != "" {
+		return cfg, nil
+	}
 	if err := ensureHTTPHasTarget(cfg); err != nil {
 		return nil, err
 	}
@@ -116,6 +119,9 @@ func parseConfig() (*config.Config, error) {
 }
 
 func runClientWorkflow(cfg *config.Config) error {
+	if cfg.PreservesTunnel() {
+		return runRecoveryWorkflow(cfg)
+	}
 	fmt.Printf("Creating tunnel for %s://%s\n", cfg.Protocol, cfg.TargetAddr)
 	fmt.Printf("Connecting to server: %s\n", cfg.ServerURL)
 
@@ -167,21 +173,16 @@ func runClientWorkflow(cfg *config.Config) error {
 	serveCtx, cancelServe := context.WithCancel(interruptCtx)
 	defer cancelServe()
 	terminal := ctrl.NewTerminalCoordinator(nil, cancelServe)
-	go ctrl.RunFallbackLifecyclePollerWithReasonContext(serveCtx, httpClient, cfg.ServerURL, tun.ID, bearer, terminal.Signal, runtime.WatchInterval)
-	if cfg.WatchWS {
-		go ctrl.RunLifecycleWatch(serveCtx, httpClient, cfg.ServerURL, tun.ID, bearer, runtime, terminal.Signal)
+	watchTunnel(serveCtx, terminal, &tunnelWatch{cfg: cfg, id: tun.ID, client: httpClient, bearer: bearer})
+	if config.IsUDPReverseMode(cfg) && cfg.Protocol == "udp" {
+		strategy := dp.NewStrategy(
+			strings.ToLower(cfg.DataPlane), cfg.ServerURL, tun.ID, authToken,
+			cfg.UDPDst, cfg.UDPListen, runtime, enc, cfg.BackoffInitial, cfg.BackoffMax,
+		)
+		return handleUDPReverseMode(serveCtx, terminal, strategy, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
 	}
-
-	if err := handleHTTPProtocol(serveCtx, terminal, cfg, runtime, tun, httpClient, bearer, csrf, authToken); err != nil {
-		return err
-	}
-	if err := handleTCPServeIncoming(serveCtx, terminal, cfg, runtime, tun, httpClient, bearer, csrf, authToken); err != nil {
-		return err
-	}
-	if err := handleUDPProtocol(serveCtx, terminal, cfg, runtime, enc, tun, authToken, httpClient, bearer, csrf); err != nil {
-		return err
-	}
-	return nil
+	errCh := serveIncomingTunnel(serveCtx, terminal, cfg, incomingTunnel(cfg, tun, authToken))
+	return waitForDataPlaneServe(serveCtx, terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
 }
 
 // incomingTunnel describes the created tunnel for the expose-local serve loops,
@@ -193,106 +194,37 @@ func incomingTunnel(cfg *config.Config, tun *ctrl.Response, dpAuthToken string) 
 	}
 }
 
-// handleHTTPProtocol delegates to tunnel package and TCP data-plane
-func handleHTTPProtocol(
-	ctx context.Context,
-	terminal *ctrl.TerminalCoordinator,
-	cfg *config.Config,
-	runtime config.RuntimeSettings,
-	tun *ctrl.Response,
-	httpClient *http.Client,
-	bearer, csrf, dpAuthToken string,
-) error {
-	if !isHTTPProtocol(cfg.Protocol) {
-		return nil
-	}
-	reporter := dp.NewBackendStateReporter(cfg.Protocol)
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- dp.StartDataPlaneServeIncomingContext(ctx, incomingTunnel(cfg, tun, dpAuthToken), runtime, reporter, lifecycleSignal(terminal))
-	}()
+type tunnelWatch struct {
+	cfg    *config.Config
+	id     string
+	client *http.Client
+	bearer string
+}
 
+func watchTunnel(ctx context.Context, terminal *ctrl.TerminalCoordinator, watch *tunnelWatch) {
+	cfg := watch.cfg
+	runtime := cfg.RuntimeSettings()
+	go ctrl.RunFallbackLifecyclePollerWithReasonContext(ctx, watch.client, cfg.ServerURL, watch.id, watch.bearer, terminal.Signal, runtime.WatchInterval)
+	if cfg.WatchWS {
+		go ctrl.RunLifecycleWatch(ctx, watch.client, cfg.ServerURL, watch.id, watch.bearer, runtime, terminal.Signal)
+	}
+}
+
+func serveIncomingTunnel(ctx context.Context, terminal *ctrl.TerminalCoordinator, cfg *config.Config, incoming *dp.IncomingTunnel) <-chan error {
+	errCh := make(chan error, 1)
+	runtime := cfg.RuntimeSettings()
+	onLifecycle := lifecycleSignal(terminal)
+	switch cfg.Protocol {
+	case "udp":
+		go func() { errCh <- dp.StartDataPlaneServeIncomingUDPContext(ctx, incoming, runtime, nil, onLifecycle) }()
+		log.Printf("INFO: UDP expose-local mode active; backend target %s", cfg.TargetAddr)
+	default:
+		reporter := dp.NewBackendStateReporter(cfg.Protocol)
+		go func() { errCh <- dp.StartDataPlaneServeIncomingContext(ctx, incoming, runtime, reporter, onLifecycle) }()
+	}
 	fmt.Printf("💡 If the local %s backend is unavailable, the tunnel remains active; later incoming traffic retries it.\n", strings.ToUpper(cfg.Protocol))
-	fmt.Println("\n🔌 Serving HTTP over data-plane. Press Ctrl+C to stop.")
-	return waitForDataPlaneServe(ctx, terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
-}
-
-// handleTCPServeIncoming is the default TCP mode: serve incoming streams from server, dial local backend.
-func handleTCPServeIncoming(
-	ctx context.Context,
-	terminal *ctrl.TerminalCoordinator,
-	cfg *config.Config,
-	runtime config.RuntimeSettings,
-	tun *ctrl.Response,
-	httpClient *http.Client,
-	bearer, csrf, dpAuthToken string,
-) error {
-	if !strings.EqualFold(cfg.Protocol, "tcp") {
-		return nil
-	}
-	reporter := dp.NewBackendStateReporter(cfg.Protocol)
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- dp.StartDataPlaneServeIncomingContext(ctx, incomingTunnel(cfg, tun, dpAuthToken), runtime, reporter, lifecycleSignal(terminal))
-	}()
-	log.Printf("INFO: TCP expose-local mode active; backend target %s", cfg.TargetAddr)
-	fmt.Printf("\n🔌 Serving TCP over data-plane (expose-local). Backend: %s\n", cfg.TargetAddr)
-	fmt.Printf("💡 If the local %s backend is unavailable, the tunnel remains active; later incoming traffic retries it.\n", strings.ToUpper(cfg.Protocol))
-	fmt.Println("\n🔌 Press Ctrl+C to stop.")
-	return waitForDataPlaneServe(ctx, terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
-}
-
-// handleUDPProtocol runs expose-local (default) or advanced reverse UDP proxy mode.
-func handleUDPProtocol(
-	ctx context.Context,
-	terminal *ctrl.TerminalCoordinator,
-	cfg *config.Config,
-	runtime config.RuntimeSettings,
-	enc config.EncryptionSettings,
-	tun *ctrl.Response,
-	authToken string,
-	httpClient *http.Client,
-	bearer, csrf string,
-) error {
-	if !strings.EqualFold(cfg.Protocol, "udp") {
-		return nil
-	}
-	if config.IsUDPReverseMode(cfg) {
-		strategy := dp.NewStrategy(
-			strings.ToLower(cfg.DataPlane), cfg.ServerURL, tun.ID, authToken,
-			cfg.UDPDst, cfg.UDPListen, runtime, enc, cfg.BackoffInitial, cfg.BackoffMax,
-		)
-		return handleUDPReverseMode(ctx, terminal, strategy, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
-	}
-	return handleUDPExposeLocal(ctx, terminal, cfg, runtime, tun, authToken, httpClient, bearer, csrf)
-}
-
-func handleUDPExposeLocal(
-	ctx context.Context,
-	terminal *ctrl.TerminalCoordinator,
-	cfg *config.Config,
-	runtime config.RuntimeSettings,
-	tun *ctrl.Response,
-	authToken string,
-	httpClient *http.Client,
-	bearer, csrf string,
-) error {
-	errCh := make(chan error, 1)
-	go func() {
-		// A connected UDP socket does not establish peer reachability. Supplying
-		// the stream-dial reporter here would announce a reachable backend before
-		// any datagram response proves it, so UDP keeps its existing data path
-		// without TCP-style up/down transition messages.
-		errCh <- dp.StartDataPlaneServeIncomingUDPContext(ctx, incomingTunnel(cfg, tun, authToken), runtime, nil, lifecycleSignal(terminal))
-	}()
-	log.Printf("INFO: UDP expose-local mode active; backend target %s", cfg.TargetAddr)
-	fmt.Printf("\n🔌 Serving UDP over data-plane (expose-local). Backend: %s\n", cfg.TargetAddr)
-	fmt.Printf(
-		"💡 If the local %s backend is unavailable, the tunnel remains active; later incoming traffic retries it.\n",
-		strings.ToUpper(cfg.Protocol),
-	)
-	fmt.Println("\n🔌 Press Ctrl+C to stop.")
-	return waitForDataPlaneServe(ctx, terminal, errCh, cfg.ServerURL, tun.ID, httpClient, bearer, csrf)
+	fmt.Printf("\n🔌 Serving %s over data-plane. Press Ctrl+C to stop.\n", strings.ToUpper(cfg.Protocol))
+	return errCh
 }
 
 func handleUDPReverseMode(

@@ -163,7 +163,9 @@ func TestProcessPositionalArgs_NumericPortUsesEffectiveProtocol(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			protocol := tt.initialProtocol
 			targetAddr := ""
-			processPositionalArgs(tt.args, &protocol, &targetAddr, false, tt.protocolFlagProvided)
+			selection := TunnelSelection{Protocol: protocol, TargetAddr: targetAddr}
+			selection.applyCreationPositionals(tt.args, false, tt.protocolFlagProvided)
+			protocol, targetAddr = selection.Protocol, selection.TargetAddr
 			assert.Equal(t, tt.wantProtocol, protocol)
 			assert.Equal(t, tt.wantTarget, targetAddr)
 		})

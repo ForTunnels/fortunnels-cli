@@ -15,7 +15,10 @@ import (
 )
 
 func TestIncomingTunnelCarriesTargetAndEncryption(t *testing.T) {
-	cfg := &config.Config{ServerURL: "https://example.test", TargetAddr: "localhost:3000", Encrypt: true, PSK: "k"}
+	cfg := &config.Config{
+		ServerURL: "https://example.test", TunnelSelection: config.TunnelSelection{TargetAddr: "localhost:3000"},
+		Encrypt: true, PSK: "k",
+	}
 
 	got := incomingTunnel(cfg, &ctrl.Response{ID: "t1"}, "")
 

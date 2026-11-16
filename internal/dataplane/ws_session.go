@@ -5,6 +5,9 @@ package dataplane
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -14,6 +17,78 @@ import (
 	"github.com/fortunnels/client/internal/config"
 	"github.com/fortunnels/client/shared/wsconn"
 )
+
+// RecoveryEpisode acquires a ticket and calls bind under the episode deadline.
+type RecoveryEpisode func(context.Context, func(context.Context, http.Header) error) error
+
+var (
+	errInvalidWebsocketURL = errors.New("invalid websocket url")
+	errAttachmentUpgrade   = errors.New("attachment upgrade failed")
+)
+
+type websocketDialResult struct {
+	resources *sessionResources
+	response  *http.Response
+}
+
+func (m *Manager) dialSession(ctx context.Context, settings config.RuntimeSettings, handler LifecycleHandler) (websocketDialResult, error) {
+	wsURL, headers := m.sessionDialParams()
+	if wsURL == "" {
+		return websocketDialResult{}, errInvalidWebsocketURL
+	}
+	if m.endpoint.recovery != nil {
+		return m.dialRecoverySession(ctx, wsURL, settings, websocketSessionSetup{
+			headers: headers, lifecycle: lifecycleSetup{handler: handler, tunnelID: m.endpoint.tunnelID},
+		})
+	}
+	return dialSessionWithHeaders(ctx, wsURL, settings, websocketSessionSetup{headers: headers, lifecycle: lifecycleSetup{handler: handler}})
+}
+
+type websocketSessionSetup struct {
+	headers   http.Header
+	lifecycle lifecycleSetup
+}
+
+func (m *Manager) dialRecoverySession(ctx context.Context, wsURL string, settings config.RuntimeSettings, setup websocketSessionSetup) (websocketDialResult, error) {
+	var result websocketDialResult
+	err := m.endpoint.recovery(ctx, func(attempt context.Context, headers http.Header) error {
+		headers = headers.Clone()
+		headers.Set("Origin", setup.headers.Get("Origin"))
+		lifecycle := setup.lifecycle
+		lifecycle.deadline, _ = attempt.Deadline()
+		var bindErr error
+		result, bindErr = dialSessionWithHeaders(attempt, wsURL, settings, websocketSessionSetup{headers: headers, lifecycle: lifecycle})
+		return bindErr
+	})
+	if err != nil && result.resources != nil {
+		result.resources.close()
+		return websocketDialResult{}, err
+	}
+	return result, err
+}
+
+func dialSessionWithHeaders(ctx context.Context, wsURL string, settings config.RuntimeSettings, setup websocketSessionSetup) (websocketDialResult, error) {
+	conn, resp, stopCancellation, err := dialWebSocketContext(ctx, wsURL, setup.headers)
+	defer stopCancellation()
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	result := websocketDialResult{response: resp}
+	if err != nil {
+		if setup.lifecycle.tunnelID != "" {
+			return result, fmt.Errorf("%w: %s", errAttachmentUpgrade, redactDialError(err, resp))
+		}
+		return result, err
+	}
+	resources, err := initializeSession(conn, settings, setup.lifecycle)
+	stopCancellation()
+	if err == nil && ctx.Err() != nil {
+		resources.close()
+		return result, ctx.Err()
+	}
+	result.resources = resources
+	return result, err
+}
 
 type wsKeepaliveConn interface {
 	SetReadDeadline(time.Time) error

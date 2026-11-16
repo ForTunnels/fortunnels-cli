@@ -21,7 +21,10 @@ const MaxPingInterval = 45 * time.Second
 
 // Validate ensures CLI configuration is consistent.
 func Validate(cfg *Config) error {
-	if err := validateProtocolFlag(cfg.Protocol); err != nil {
+	if err := validateRecoverySelection(cfg); err != nil {
+		return err
+	}
+	if err := validateSelectedProtocol(cfg); err != nil {
 		return err
 	}
 	if err := validateServerURL(cfg.ServerURL); err != nil {
@@ -97,6 +100,13 @@ func validateLoginPasswordPair(cfg *Config) error {
 	return fmt.Errorf("when using --login, provide password via --pass, --pass-file, --pass-stdin, or FORTUNNELS_PASSWORD")
 }
 
+func validateSelectedProtocol(cfg *Config) error {
+	if cfg.TunnelID != "" && !cfg.protocolProvided {
+		return nil
+	}
+	return validateProtocolFlag(cfg.Protocol)
+}
+
 func validateProtocolFlag(protocol string) error {
 	switch strings.ToLower(protocol) {
 	case protoHTTP, protoHTTPS, protoTCP, protoUDP:
@@ -140,6 +150,12 @@ func isLocalServerHost(host string) bool {
 }
 
 func validateTargetAddressIfNeeded(cfg *Config) error {
+	if cfg.TunnelID != "" {
+		if cfg.targetProvided && cfg.positionalPort == "" {
+			return validateTargetAddress(strings.TrimSpace(cfg.TargetAddr))
+		}
+		return nil
+	}
 	protocol := strings.ToLower(strings.TrimSpace(cfg.Protocol))
 	switch protocol {
 	case protoHTTP, protoHTTPS, protoTCP:

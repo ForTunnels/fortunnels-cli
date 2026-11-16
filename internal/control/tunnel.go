@@ -63,6 +63,13 @@ func CreateTunnelWithClient(
 	client *http.Client,
 	bearer, csrf string,
 ) (*CreatedTunnel, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return createTunnelRequest(ctx, serverURL+"/api/tunnels", requestAuth{client: client, bearer: bearer, csrf: csrf},
+		tunnelCreationBody(localAddr, protocol, userID))
+}
+
+func tunnelCreationBody(localAddr, protocol, userID string) *protocolv1.TunnelCreateRequest {
 	requestBody := protocolv1.TunnelCreateRequest{
 		TargetAddr: localAddr,
 		Protocol:   protocol,
@@ -79,33 +86,21 @@ func CreateTunnelWithClient(
 		}
 	}
 
-	jsonData, err := json.Marshal(requestBody)
+	return &requestBody
+}
+
+func createTunnelRequest(ctx context.Context, endpoint string, auth requestAuth, body *protocolv1.TunnelCreateRequest) (*CreatedTunnel, error) {
+	jsonData, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
 
-	// Build request
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, "POST", serverURL+"/api/tunnels", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if strings.TrimSpace(bearer) != "" {
-		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(bearer))
-	}
-	if strings.TrimSpace(csrf) != "" {
-		req.Header.Set("X-CSRF-Token", strings.TrimSpace(csrf))
-	}
-	// Select client
-	var hc *http.Client
-	if client != nil {
-		hc = client
-	} else {
-		hc = &http.Client{Timeout: 10 * time.Second}
-	}
-	resp, err := hc.Do(req)
+	resp, err := auth.do(req)
 	if err != nil {
 		return nil, err
 	}

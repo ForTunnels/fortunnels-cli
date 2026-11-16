@@ -154,6 +154,32 @@ type TunnelCreateRequest struct {
 	IsPublic              *bool  `json:"is_public,omitempty"`
 }
 
+const (
+	AttachmentHeader        = "X-Fortunnels-Attachment"
+	EventTunnelAttachReady  = "tunnel_attach_ready"
+	EventTunnelAttachFailed = "tunnel_attach_failed"
+)
+
+type AttachmentCode string
+
+const (
+	AttachmentTunnelInUse         AttachmentCode = "tunnel_in_use"
+	AttachmentAddressUnavailable  AttachmentCode = "address_unavailable"
+	AttachmentTunnelNotAttachable AttachmentCode = "tunnel_not_attachable"
+)
+
+type TunnelAttachmentResponse struct {
+	Tunnel           Tunnel `json:"tunnel"`
+	DPAuth           string `json:"dp_auth"`
+	AttachmentTicket string `json:"attachment_ticket"`
+}
+
+type TunnelAttachmentEvent struct {
+	Event    string         `json:"event"`
+	TunnelID string         `json:"tunnel_id"`
+	Code     AttachmentCode `json:"code,omitempty"`
+}
+
 type TunnelPatchRequest struct {
 	ID                    string `json:"id"`
 	Action                string `json:"action"`

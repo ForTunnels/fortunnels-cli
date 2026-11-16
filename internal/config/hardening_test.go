@@ -23,7 +23,8 @@ func TestValidateEncryptDataPlane(t *testing.T) {
 	const psk = "12345678901234567890123456789012"
 	reverse := func(plane string, encrypt bool) *Config {
 		return &Config{
-			Protocol: protoUDP, UDPListen: "127.0.0.1:5353", UDPDst: "127.0.0.1:53",
+			TunnelSelection: TunnelSelection{Protocol: protoUDP},
+			UDPListen:       "127.0.0.1:5353", UDPDst: "127.0.0.1:53",
 			DataPlane: plane, Encrypt: encrypt, PSK: psk,
 		}
 	}
@@ -37,7 +38,7 @@ func TestValidateEncryptDataPlane(t *testing.T) {
 		{"ws with encrypt", reverse("ws", true), false},
 		{"default plane with encrypt", reverse("", true), false},
 		{"quic without encrypt", reverse("quic", false), false},
-		{"http with encrypt", &Config{Protocol: protoHTTP, Encrypt: true, PSK: psk}, false},
+		{"http with encrypt", &Config{TunnelSelection: TunnelSelection{Protocol: protoHTTP}, Encrypt: true, PSK: psk}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

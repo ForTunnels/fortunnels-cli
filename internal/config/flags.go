@@ -36,12 +36,11 @@ func SetDefaultServerURL(value string) {
 
 // Config aggregates all CLI options after parsing.
 type Config struct {
-	Login                 string
-	Password              string
-	Token                 string
-	ServerURL             string
-	TargetAddr            string
-	Protocol              string
+	Login     string
+	Password  string
+	Token     string
+	ServerURL string
+	TunnelSelection
 	DataPlane             string
 	UserID                string
 	BackoffInitial        time.Duration
@@ -163,8 +162,7 @@ func Parse() (*Config, error) {
 	fs.StringVar(&cfg.TokenFile, "token-file", cfg.TokenFile, "Read bearer token from file")
 	fs.BoolVar(&cfg.PasswordFromStdin, "pass-stdin", cfg.PasswordFromStdin, "Read password from stdin")
 	fs.BoolVar(&cfg.TokenFromStdin, "token-stdin", cfg.TokenFromStdin, "Read bearer token from stdin")
-	fs.StringVar(&cfg.TargetAddr, "local", cfg.TargetAddr, "Target address to tunnel")
-	fs.StringVar(&cfg.Protocol, "protocol", cfg.Protocol, "Protocol (http, https, tcp)")
+	registerTunnelFlags(fs, &cfg.TunnelSelection)
 	fs.StringVar(&cfg.DataPlane, "dp", cfg.DataPlane, "Data-plane transport (ws|quic|dtls)")
 	fs.StringVar(&cfg.UserID, "user", cfg.UserID, "User ID")
 	fs.IntVar(&backoffInitialSec, "backoff-initial", backoffInitialSec, "Initial reconnect backoff seconds")
@@ -208,7 +206,9 @@ func Parse() (*Config, error) {
 	if err := validatePositionalArgs(remaining); err != nil {
 		return nil, err
 	}
-	processPositionalArgs(remaining, &cfg.Protocol, &cfg.TargetAddr, localProvided, protocolProvided)
+	if err := cfg.applyTunnelSelection(fs, remaining, localProvided, protocolProvided); err != nil {
+		return nil, err
+	}
 
 	if err := applyDurationFlags(cfg, &durations); err != nil {
 		return nil, err
@@ -236,21 +236,20 @@ func Parse() (*Config, error) {
 // defaultConfig returns Config populated with CLI defaults.
 func defaultConfig() *Config {
 	return &Config{
-		ServerURL:      defaultServerURL,
-		TargetAddr:     "localhost:3000",
-		Protocol:       protoHTTP,
-		DataPlane:      "ws",
-		UserID:         "default",
-		BackoffInitial: time.Second,
-		BackoffMax:     30 * time.Second,
-		PingInterval:   30 * time.Second,
-		PingTimeout:    10 * time.Second,
-		SmuxInterval:   25 * time.Second,
-		SmuxTimeout:    60 * time.Second,
-		WatchInterval:  10 * time.Second,
-		PSK:            "",
-		QUICPort:       defaultQUICPort,
-		DTLSPort:       defaultDTLSPort,
+		ServerURL:       defaultServerURL,
+		TunnelSelection: TunnelSelection{TargetAddr: "localhost:3000", Protocol: protoHTTP},
+		DataPlane:       "ws",
+		UserID:          "default",
+		BackoffInitial:  time.Second,
+		BackoffMax:      30 * time.Second,
+		PingInterval:    30 * time.Second,
+		PingTimeout:     10 * time.Second,
+		SmuxInterval:    25 * time.Second,
+		SmuxTimeout:     60 * time.Second,
+		WatchInterval:   10 * time.Second,
+		PSK:             "",
+		QUICPort:        defaultQUICPort,
+		DTLSPort:        defaultDTLSPort,
 	}
 }
 
@@ -336,6 +335,7 @@ var booleanCLIArgs = map[string]struct{}{
 	"pass-stdin":           {},
 	"token-stdin":          {},
 	"watch":                {},
+	"keep-tunnel":          {},
 	"encrypt":              {},
 	"psk-stdin":            {},
 	"dp-auth-token-stdin":  {},
@@ -382,92 +382,5 @@ func applyConfigFileAuthtoken(cfg *Config) {
 	if tok := AuthtokenFromFile(); tok != "" {
 		cfg.Token = tok
 		cfg.TokenFromConfigFile = true
-	}
-}
-
-func validatePositionalArgs(args []string) error {
-	if len(args) > 2 {
-		return fmt.Errorf(
-			"too many positional arguments: at most 2 allowed (protocol and address); supported protocols: %s, %s, %s, %s; use -protocol / -local for explicit values",
-			protoHTTP, protoHTTPS, protoTCP, protoUDP,
-		)
-	}
-	if len(args) != 2 {
-		return nil
-	}
-	a0 := strings.ToLower(args[0])
-	a1 := strings.ToLower(args[1])
-	if isSupportedProtocol(a1) && !isSupportedProtocol(a0) {
-		return fmt.Errorf(
-			"invalid argument order: protocol must come before address (e.g. %s %s); or use -protocol and -local",
-			args[1], args[0],
-		)
-	}
-	return nil
-}
-
-func processPositionalArgs(args []string, protocol, targetAddr *string, localFlagProvided, protocolFlagProvided bool) {
-	switch len(args) {
-	case 0:
-		return
-	case 1:
-		handleSingleArg(args[0], protocol, targetAddr, localFlagProvided, protocolFlagProvided)
-	default:
-		handleProtocolAndAddrArgs(args[0], args[1], protocol, targetAddr, localFlagProvided, protocolFlagProvided)
-	}
-}
-
-func handleSingleArg(arg string, protocol, targetAddr *string, localFlagProvided, protocolFlagProvided bool) {
-	if p := support.ParsePort(arg); p != "" {
-		setProtocolIfMissing(protocol, protocolFlagProvided, protoHTTP)
-		setTargetIfMissing(targetAddr, localFlagProvided, targetForPort(*protocol, p))
-		return
-	}
-	if support.LooksLikeHostPort(arg) {
-		setProtocolIfMissing(protocol, protocolFlagProvided, protoHTTP)
-		setTargetIfMissing(targetAddr, localFlagProvided, arg)
-	}
-}
-
-func handleProtocolAndAddrArgs(protoArg, addrArg string, protocol, targetAddr *string, localFlagProvided, protocolFlagProvided bool) {
-	argProto := strings.ToLower(protoArg)
-	if !isSupportedProtocol(argProto) {
-		return
-	}
-	setProtocolIfMissing(protocol, protocolFlagProvided, argProto)
-	if p := support.ParsePort(addrArg); p != "" {
-		setTargetIfMissing(targetAddr, localFlagProvided, targetForPort(*protocol, p))
-		return
-	}
-	if support.LooksLikeHostPort(addrArg) {
-		setTargetIfMissing(targetAddr, localFlagProvided, addrArg)
-	}
-}
-
-func setProtocolIfMissing(protocol *string, provided bool, value string) {
-	if !provided {
-		*protocol = value
-	}
-}
-
-func setTargetIfMissing(targetAddr *string, provided bool, value string) {
-	if !provided {
-		*targetAddr = value
-	}
-}
-
-func targetForPort(protocol, port string) string {
-	if strings.EqualFold(strings.TrimSpace(protocol), protoUDP) {
-		return "127.0.0.1:" + port
-	}
-	return "localhost:" + port
-}
-
-func isSupportedProtocol(p string) bool {
-	switch p {
-	case protoHTTP, protoHTTPS, protoTCP, protoUDP:
-		return true
-	default:
-		return false
 	}
 }

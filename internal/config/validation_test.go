@@ -199,7 +199,7 @@ func TestIsLocalServerHost(t *testing.T) {
 }
 
 func TestValidateTargetAddressIfNeeded_TCPUsesTargetAddr(t *testing.T) {
-	cfg := &Config{Protocol: protoTCP, TargetAddr: "127.0.0.1:5433"}
+	cfg := &Config{TunnelSelection: TunnelSelection{Protocol: protoTCP, TargetAddr: "127.0.0.1:5433"}}
 	require.NoError(t, validateTargetAddressIfNeeded(cfg))
 }
 

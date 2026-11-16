@@ -102,6 +102,7 @@ type Manager struct {
 // dataPlaneEndpoint identifies the tunnel data plane this manager dials.
 type dataPlaneEndpoint struct {
 	serverURL, tunnelID, authToken string
+	recovery                       RecoveryEpisode
 }
 
 // managerLifecycle is the optional terminal-event stream of the live session.
@@ -132,6 +133,13 @@ func NewManager(serverURL, tunnelID, dpAuthToken string, boInit, boMax time.Dura
 		bounds:   backoffBounds{init: boInit, max: boMax},
 		settings: settings,
 	}
+}
+
+// NewRecoveryManager uses a fresh owner-authenticated attachment after each disconnection.
+func NewRecoveryManager(serverURL, tunnelID string, settings config.RuntimeSettings, episode RecoveryEpisode) *Manager {
+	manager := NewManager(serverURL, tunnelID, "", 0, 0, settings)
+	manager.endpoint.recovery = episode
+	return manager
 }
 
 type dataPlaneConn interface {
@@ -167,21 +175,10 @@ func (m *Manager) EnsureSessionContext(ctx context.Context) (dataPlaneSession, e
 			m.mu.Unlock()
 			return sess, nil
 		}
-		wsURL, headers := m.sessionDialParams()
 		settings, handler := m.settings, m.lifecycle.handler
 		m.mu.Unlock()
-		if wsURL == "" {
-			return nil, errors.New("invalid websocket url")
-		}
-		conn, resp, stopDialCancellation, err := dialWebSocketContext(ctx, wsURL, headers)
-		if resp != nil && resp.Body != nil {
-			_ = resp.Body.Close()
-		}
-		var resources *sessionResources
-		if err == nil {
-			resources, err = initializeSession(conn, settings, handler)
-		}
-		stopDialCancellation()
+		dialed, err := m.dialSession(ctx, settings, handler)
+		resources, resp := dialed.resources, dialed.response
 		if err == nil {
 			m.mu.Lock()
 			if ctxErr := ctx.Err(); ctxErr != nil {
@@ -210,6 +207,9 @@ func (m *Manager) EnsureSessionContext(ctx context.Context) (dataPlaneSession, e
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, ctxErr
+		}
+		if m.endpoint.recovery != nil || errors.Is(err, errInvalidWebsocketURL) {
+			return nil, err
 		}
 		if m.isStopped() {
 			return nil, errors.New("stopped")
@@ -240,25 +240,35 @@ func dialWebSocketContext(
 	if baseDial == nil {
 		baseDial = (&net.Dialer{}).DialContext
 	}
-	dialFinished := make(chan struct{})
-	var finishOnce sync.Once
-	finish := func() { finishOnce.Do(func() { close(dialFinished) }) }
+	finish := func() {}
 	dialer.NetDialContext = func(dialCtx context.Context, network, address string) (net.Conn, error) {
 		conn, err := baseDial(dialCtx, network, address)
 		if err != nil {
 			return nil, err
 		}
-		go func() {
-			select {
-			case <-ctx.Done():
-				_ = conn.Close()
-			case <-dialFinished:
-			}
-		}()
+		finish = guardWebSocketDial(ctx, conn)
 		return conn, nil
 	}
 	conn, resp, err := dialer.DialContext(ctx, wsURL, headers)
 	return conn, resp, finish, err
+}
+
+// guardWebSocketDial closes a canceled in-flight connection. Its handoff
+// waits for any running close before the connection can leave the dial owner.
+func guardWebSocketDial(ctx context.Context, conn dataPlaneConn) func() {
+	done := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		defer close(done)
+		_ = conn.Close()
+	})
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			if !stop() {
+				<-done
+			}
+		})
+	}
 }
 
 func (m *Manager) isStopped() bool {
@@ -304,7 +314,7 @@ func (r *sessionResources) close() {
 	}
 }
 
-func initializeSession(conn *websocket.Conn, settings config.RuntimeSettings, handler LifecycleHandler) (*sessionResources, error) {
+func initializeSession(conn *websocket.Conn, settings config.RuntimeSettings, lifecycle lifecycleSetup) (*sessionResources, error) {
 	sess, err := setupWSSmuxSession(conn, settings)
 	if err != nil {
 		conn.Close()
@@ -312,8 +322,8 @@ func initializeSession(conn *websocket.Conn, settings config.RuntimeSettings, ha
 	}
 
 	resources := &sessionResources{conn: conn, sess: sess}
-	if handler != nil {
-		control, controlErr := openLifecycleControlStream(sess, handler)
+	if lifecycle.handler != nil || lifecycle.tunnelID != "" {
+		control, controlErr := openLifecycleStream(sess, lifecycle)
 		if controlErr != nil {
 			resources.close()
 			return nil, controlErr

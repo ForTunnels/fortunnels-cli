@@ -104,6 +104,8 @@ type IncomingTunnel struct {
 	Target string
 	// Encryption is the PSK layer applied to the payload of incoming streams.
 	Encryption config.EncryptionSettings
+	// Manager optionally provides the already attached recovery session and subsequent episodes.
+	Manager *Manager
 }
 
 func StartDataPlaneServeIncoming(serverURL, tunnelID string, runtime config.RuntimeSettings, reporter BackendStateReporter, dpAuthToken string) error {
@@ -146,9 +148,10 @@ func startIncomingDataPlaneContext(
 	defer close(stopCloser)
 	policy := incomingPolicy{reporter: reporter, tunnelID: tunnel.TunnelID, target: tunnel.Target, enc: tunnel.Encryption}
 	loop := incomingStreamLoop{
-		sessions: mgr,
-		retry:    newReconnectBackoff(mgr.bounds.init, mgr.bounds.max),
-		wait:     waitRetryDelay,
+		sessions:      mgr,
+		retry:         newReconnectBackoff(mgr.bounds.init, mgr.bounds.max),
+		wait:          waitRetryDelay,
+		readyRequired: tunnel.Manager != nil,
 		dispatch: func(s io.ReadWriteCloser) {
 			go func() {
 				if err := handleStream(s, policy); err != nil && !support.IsBenignCopyError(err) {
@@ -175,6 +178,8 @@ type incomingStreamLoop struct {
 	retry    *reconnectBackoff
 	wait     retryWaiter
 	dispatch func(io.ReadWriteCloser)
+	// A recovery session exists only after readiness, so its next episode starts immediately.
+	readyRequired bool
 }
 
 func (l incomingStreamLoop) run(ctx context.Context) error {
@@ -195,6 +200,9 @@ func (l incomingStreamLoop) run(ctx context.Context) error {
 				return ctx.Err()
 			}
 			l.sessions.resetSession()
+			if l.readyRequired {
+				continue
+			}
 			if waitErr := l.wait(ctx, l.retry.Next()); waitErr != nil {
 				return waitErr
 			}
@@ -208,6 +216,9 @@ func (l incomingStreamLoop) run(ctx context.Context) error {
 // newIncomingDataPlaneManager builds the session manager for the expose-local
 // HTTP, TCP and UDP modes from the configured --backoff-initial/--backoff-max.
 func newIncomingDataPlaneManager(tunnel *IncomingTunnel, runtime config.RuntimeSettings) *Manager {
+	if tunnel.Manager != nil {
+		return tunnel.Manager
+	}
 	return NewManager(tunnel.ServerURL, tunnel.TunnelID, tunnel.AuthToken, tunnel.Backoff.Initial, tunnel.Backoff.Max, runtime)
 }
 

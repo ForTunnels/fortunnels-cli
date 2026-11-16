@@ -18,23 +18,23 @@ func TestValidateUDPModeFlags(t *testing.T) {
 	}{
 		{
 			name:    "expose-local no flags",
-			cfg:     &Config{Protocol: protoUDP},
+			cfg:     &Config{TunnelSelection: TunnelSelection{Protocol: protoUDP}},
 			wantErr: false,
 		},
 		{
 			name: "reverse both flags",
 			cfg: &Config{
-				Protocol:  protoUDP,
-				UDPListen: ":5353",
-				UDPDst:    "127.0.0.1:53",
+				TunnelSelection: TunnelSelection{Protocol: protoUDP},
+				UDPListen:       ":5353",
+				UDPDst:          "127.0.0.1:53",
 			},
 			wantErr: false,
 		},
 		{
 			name: "only listen",
 			cfg: &Config{
-				Protocol:  protoUDP,
-				UDPListen: ":5353",
+				TunnelSelection: TunnelSelection{Protocol: protoUDP},
+				UDPListen:       ":5353",
 			},
 			wantErr:   true,
 			errSubstr: "both --udp-listen and --udp-dst",
@@ -42,8 +42,8 @@ func TestValidateUDPModeFlags(t *testing.T) {
 		{
 			name: "only dst",
 			cfg: &Config{
-				Protocol: protoUDP,
-				UDPDst:   "127.0.0.1:53",
+				TunnelSelection: TunnelSelection{Protocol: protoUDP},
+				UDPDst:          "127.0.0.1:53",
 			},
 			wantErr:   true,
 			errSubstr: "both --udp-listen and --udp-dst",
@@ -51,8 +51,7 @@ func TestValidateUDPModeFlags(t *testing.T) {
 		{
 			name: "uppercase UDP protocol",
 			cfg: &Config{
-				Protocol:   "UDP",
-				TargetAddr: "127.0.0.1:9000",
+				TunnelSelection: TunnelSelection{Protocol: "UDP", TargetAddr: "127.0.0.1:9000"},
 			},
 			wantErr: false,
 		},
@@ -72,20 +71,22 @@ func TestValidateUDPModeFlags(t *testing.T) {
 }
 
 func TestIsUDPExposeLocalMode(t *testing.T) {
-	require.True(t, IsUDPExposeLocalMode(&Config{Protocol: protoUDP}))
+	require.True(t, IsUDPExposeLocalMode(&Config{TunnelSelection: TunnelSelection{Protocol: protoUDP}}))
 	require.False(t, IsUDPExposeLocalMode(&Config{
-		Protocol:  protoUDP,
-		UDPListen: ":1",
-		UDPDst:    "127.0.0.1:1",
+		TunnelSelection: TunnelSelection{Protocol: protoUDP},
+		UDPListen:       ":1",
+		UDPDst:          "127.0.0.1:1",
 	}))
 }
 
 func TestValidateUDPExposeLocalOptions(t *testing.T) {
-	err := ValidateUDPExposeLocalOptions(&Config{Protocol: protoUDP, DataPlane: "quic"})
+	err := ValidateUDPExposeLocalOptions(&Config{TunnelSelection: TunnelSelection{Protocol: protoUDP}, DataPlane: "quic"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "WS data-plane")
 
-	err = ValidateUDPExposeLocalOptions(&Config{Protocol: protoUDP, Encrypt: true, PSK: "12345678901234567890123456789012"})
+	err = ValidateUDPExposeLocalOptions(&Config{
+		TunnelSelection: TunnelSelection{Protocol: protoUDP}, Encrypt: true, PSK: "12345678901234567890123456789012",
+	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "--encrypt")
 }

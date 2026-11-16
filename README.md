@@ -47,6 +47,18 @@ Open the public HTTPS URL printed by the CLI. It forwards requests to `localhost
 
 Keep the token private. For automation, pass it through `FORTUNNELS_TOKEN` or `-token-file` instead of putting it in the command.
 
+## Keep a tunnel across restarts
+
+Sign in as the owner, start your local service, and run:
+
+```sh
+fortunnels --keep-tunnel http 8080
+```
+
+Save the tunnel ID printed alongside the public URL. After stopping the CLI or restarting the machine, start the local service and run `fortunnels --tunnel-id ID` with the same account. The CLI uses the saved protocol and target. The same public URL starts serving when the client reports that it has attached.
+
+The address stays reserved while the saved tunnel is offline and unexpired. If the first client is still connected, the second waits for it to release the tunnel. Use the dashboard to delete a saved tunnel you no longer need. This works for HTTP, HTTPS, TCP, and public UDP.
+
 ## CLI reference
 
 | Task | Command |
